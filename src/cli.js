@@ -82,7 +82,7 @@ async function ciMode(repoRoot, options) {
 }
 
 async function main() {
-  const usage = 'Usage: oc-review ci [repoPath] [--base <ref> [--head <ref>] [--merge-base] | --diff <file>]';
+  const usage = 'Usage: opencodereviewer ci [repoPath] [--base <ref> [--head <ref>] [--merge-base] | --diff <file>]';
   let options, cmd, repoPath;
   try {
     const { values, positionals } = parseArgs({

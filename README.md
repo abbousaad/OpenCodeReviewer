@@ -96,7 +96,7 @@ configured size limits.
 docker run --rm \
   -e DEEPSEEK_API_KEY="$DEEPSEEK_API_KEY" \
   -v "$PWD":/repo -w /repo \
-  opencodereviewer node /app/src/cli.js ci /repo
+  opencodereviewer opencodereviewer ci /repo
 ```
 
 Exits `0` for a completed review that passes the severity gate and `1` when a
@@ -112,7 +112,7 @@ revisions and, for `--merge-base`, their common history. Use full commit
 SHAs in CI to keep the reviewed range stable.
 
 ```bash
-node /app/src/cli.js ci /repo --base "$BASE_SHA" --head "$HEAD_SHA" --merge-base
+opencodereviewer ci /repo --base "$BASE_SHA" --head "$HEAD_SHA" --merge-base
 ```
 
 Use `--merge-base` for a pull or merge request to review changes since the
@@ -129,7 +129,7 @@ to the same CLI. The supplied directory can be an exported source tree or
 a directory containing only your trusted context files.
 
 ```bash
-node /app/src/cli.js ci /repo --diff /inputs/change.patch
+opencodereviewer ci /repo --diff /inputs/change.patch
 ```
 
 This works without Git metadata or a connection to the hosting service.
@@ -160,7 +160,7 @@ ai_code_review:
     GIT_DEPTH: "0"            # full history so diffs resolve
     SEVERITY_GATE: "major"
   script:
-    - node /app/src/cli.js ci "$CI_PROJECT_DIR"
+    - opencodereviewer ci "$CI_PROJECT_DIR"
   artifacts:
     when: always
     paths:
@@ -182,7 +182,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
-      - run: node /app/src/cli.js ci "$GITHUB_WORKSPACE"
+      - run: opencodereviewer ci "$GITHUB_WORKSPACE"
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           GITHUB_BASE_REF: ${{ github.base_ref }}
@@ -220,7 +220,8 @@ Requires Node ≥ 20 and the `opencode` CLI on PATH.
 ```bash
 npm install
 REPO_DIR=/absolute/path/to/small-repo DEEPSEEK_API_KEY=... npm start
-DEEPSEEK_API_KEY=... npm run ci .      # CI review of the current repo
+npm install --global .
+DEEPSEEK_API_KEY=... opencodereviewer ci .
 ```
 
 The local dashboard listens on http://127.0.0.1:3000. It defaults to the

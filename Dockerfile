@@ -17,6 +17,7 @@ RUN npm ci --omit=dev
 # App source + OpenCode provider config
 COPY opencode.json review.config.json ./
 COPY src ./src
+RUN ln -s /app/src/cli.js /usr/local/bin/opencodereviewer
 COPY scripts ./scripts
 COPY skills ./skills
 
@@ -35,5 +36,5 @@ EXPOSE 3000
 
 # Default: web dashboard (standalone batch review).
 # CI usage overrides the command, e.g.:
-#   docker run ... opencodereviewer node src/cli.js ci
+#   docker run ... opencodereviewer opencodereviewer ci
 CMD ["node", "src/server.js"]
