@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenCodeReviewer — AI Code Review</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>🔍 OpenCodeReviewer</h1>
+      <p class="subtitle">OpenCode-powered code review · standalone batch mode</p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Start a review</h2>
+        <form id="review-form">
+          <label>
+            Repository path <span class="hint">(absolute path within the configured review directory)</span>
+            <input id="repoRoot" name="repoRoot" required />
+          </label>
+          <div class="row">
+            <label>
+              Severity gate
+              <select id="severityGate" name="severityGate">
+                <option value="info">info</option>
+                <option value="minor">minor</option>
+                <option value="major" selected>major</option>
+                <option value="critical">critical</option>
+              </select>
+            </label>
+            <label>
+              Model
+              <input id="model" name="model" placeholder="deepseek/deepseek-flash" />
+            </label>
+          </div>
+          <button type="submit" id="start-btn">Review codebase</button>
+        </form>
+        <div id="banner" class="banner hidden"></div>
+      </section>
+
+      <section class="panel hidden" id="progress-panel">
+        <h2>Progress</h2>
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+        <p id="progress-text">Waiting…</p>
+        <ul id="log"></ul>
+      </section>
+
+      <section class="panel hidden" id="results-panel">
+        <div class="results-head">
+          <h2>Results</h2>
+          <a id="download" href="#" download="review-report.md">⬇ Download report.md</a>
+        </div>
+        <div id="gate" class="gate"></div>
+        <p id="usage"></p>
+        <div id="counts" class="counts"></div>
+        <div id="findings"></div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

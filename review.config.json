@@ -1,0 +1,30 @@
+{
+  "model": "deepseek/deepseek-flash",
+  "severityGate": "major",
+  "contextFile": "REVIEW_CONTEXT.md",
+  "contextFileAliases": ["REVIEW_CONTEXT.md", "ARCHITECTURE.md", "docs/ARCHITECTURE.md"],
+  "contextFileRequired": false,
+  "batch": {
+    "maxFiles": 6,
+    "maxBytes": 48000
+  },
+  "diff": {
+    "maxHunkBytesPerCall": 48000
+  },
+  "include": [
+    "**/*.{js,jsx,ts,tsx,mjs,cjs,py,go,rb,rs,java,kt,php,c,cc,cpp,h,hpp,cs,swift,scala,sh,sql,vue,svelte}"
+  ],
+  "exclude": [
+    "**/node_modules/**",
+    "**/.git/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/vendor/**",
+    "**/*.min.js",
+    "**/*.lock",
+    "**/package-lock.json",
+    "**/yarn.lock",
+    "**/pnpm-lock.yaml",
+    "**/*.map"
+  ]
+}

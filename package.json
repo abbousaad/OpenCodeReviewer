@@ -1,0 +1,25 @@
+{
+  "name": "opencodereviewer",
+  "version": "0.1.0",
+  "description": "OpenCodeReviewer reviews Git ranges or unified diffs in any CI system and offers a standalone web dashboard.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "oc-review": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test scripts/test.js",
+    "ci": "node src/cli.js ci",
+    "smoke": "node scripts/smoke.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "fast-glob": "^3.3.2",
+    "picomatch": "^4.0.2",
+    "simple-git": "^4.0.2"
+  },
+  "license": "MIT"
+}

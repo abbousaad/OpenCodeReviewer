@@ -1,0 +1,13 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+*.md
+!README.md
+!skills/**/SKILL.md
+review-report.*
+.DS_Store
+tmp
+uploads
+.env
+.env.*

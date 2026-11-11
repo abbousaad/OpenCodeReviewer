@@ -1,0 +1,10 @@
+node_modules/
+*.log
+.DS_Store
+review-report.json
+review-report.md
+tmp/
+uploads/
+.env
+.env.*
+!.env.example
