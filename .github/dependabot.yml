@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Includes opencode-ai, the OpenCode CLI the reviewer image runs.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

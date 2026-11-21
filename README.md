@@ -218,7 +218,9 @@ mock tests require Git and a local loopback port, and use no model credentials.
 
 ## Local dev (without Docker)
 
-Requires Node ≥ 20 and the `opencode` CLI on PATH.
+Requires Node ≥ 20. `npm install` installs the OpenCode CLI version pinned in
+`package-lock.json`, and `npm start` uses it. Other commands use the `opencode`
+CLI on PATH.
 
 ```bash
 npm install
