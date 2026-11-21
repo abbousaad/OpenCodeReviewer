@@ -7,7 +7,7 @@ import { diffReviewPrompt, batchReviewPrompt, parseFindings } from './prompts.js
  */
 export async function reviewDiffUnit(unit, { config, contextText }) {
   const prompt = diffReviewPrompt({ diffText: unit.diffText, contextText });
-  return review(prompt, config.model, unit.label, unit.files);
+  return failClipped(await review(prompt, config.model, unit.label, unit.files), unit);
 }
 
 /**
@@ -17,7 +17,17 @@ export async function reviewDiffUnit(unit, { config, contextText }) {
 export async function reviewBatch(batch, { config, contextText }) {
   const prompt = batchReviewPrompt({ files: batch.files, contextText });
   const fileNames = batch.files.map((f) => f.path);
-  return review(prompt, config.model, batch.label, fileNames);
+  return failClipped(await review(prompt, config.model, batch.label, fileNames), batch);
+}
+
+// Code the model never saw cannot pass the gate: keep the findings, mark the batch failed.
+function failClipped(result, unit) {
+  if (!unit.truncated || result.error) return result;
+  return {
+    ...result,
+    error: 'A line over the size limit was clipped, so part of this batch was not reviewed. ' +
+      'Exclude generated or minified files, or raise the size limit.',
+  };
 }
 
 async function review(prompt, model, label, files) {

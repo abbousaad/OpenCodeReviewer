@@ -142,7 +142,7 @@ test('CI reviews a unified diff without a Git checkout', (t) => {
   const { root, repo, env } = fixture(t);
   writeFileSync(path.join(repo, 'BUSINESS_LOGIC.md'), 'OWNER_ACCESS_RULE');
   const patch = path.join(root, 'change.patch');
-  const run = () => spawnSync(process.execPath, ['src/cli.js', 'ci', repo, '--diff', patch], {
+  const run = (extraEnv) => spawnSync(process.execPath, ['src/cli.js', 'ci', repo, '--diff', patch], {
     env: {
       ...env,
       GITEA_BASE_REF: 'unavailable-ci-target',
@@ -152,6 +152,7 @@ test('CI reviews a unified diff without a Git checkout', (t) => {
       MOCK_CONTEXT: 'OWNER_ACCESS_RULE,+++ not a file header',
       MOCK_STANDALONE: '0',
       SEVERITY_GATE: 'major',
+      ...extraEnv,
     },
     encoding: 'utf8',
     timeout: 5000,
@@ -181,6 +182,16 @@ test('CI reviews a unified diff without a Git checkout', (t) => {
   const invalid = run();
   assert.equal(invalid.status, 3, invalid.stderr);
   assert.match(invalid.stderr, /Incomplete unified diff hunk/);
+
+  // A clipped line means unreviewed code: keep the findings but fail closed.
+  writeFileSync(patch, `--- src/app.js\n+++ src/app.js\n@@ -1 +1 @@\n-old\n+${'x'.repeat(60000)}\n`);
+  const clipped = run({ MOCK_REPLY: '', MOCK_CONTEXT: 'OWNER_ACCESS_RULE' });
+  assert.equal(clipped.status, 3, clipped.stderr);
+  assert.match(clipped.stderr, /clipped before review in: src\/app\.js/);
+  const clippedReport = JSON.parse(readFileSync(path.join(repo, 'review-report.json'), 'utf8'));
+  assert.equal(clippedReport.status, 'incomplete');
+  assert.deepEqual(clippedReport.meta.truncatedFiles, ['src/app.js']);
+  assert.match(clippedReport.errors[0].error, /was clipped/);
 });
 
 test('dashboard protects review jobs and uses the model selected for each job', { timeout: 10000 }, async (t) => {

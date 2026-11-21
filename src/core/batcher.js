@@ -61,6 +61,7 @@ export async function buildBatches(repoRoot, config) {
         batches.push({
           label: `${rel} (lines ${chunk.startLine}-${chunk.endLine} of ${totalLines})`,
           files: [{ path: rel, content: chunk.text, ...range }],
+          truncated: chunk.truncated,
         });
       }
       if (chunks.some((c) => c.truncated)) truncated.push(rel);
