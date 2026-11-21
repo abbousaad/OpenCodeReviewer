@@ -31,3 +31,20 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  docker:
+    name: docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build -t opencodereviewer .
+      - name: Check the pinned OpenCode CLI and entry points
+        run: |
+          expected=$(node -p "require('./package.json').dependencies['opencode-ai']")
+          actual=$(docker run --rm opencodereviewer opencode --version)
+          echo "opencode $actual (expected $expected)"
+          test "$actual" = "$expected"
+          docker run --rm opencodereviewer opencodereviewer --help

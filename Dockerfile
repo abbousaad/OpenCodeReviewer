@@ -5,14 +5,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install OpenCode CLI globally
-RUN npm install -g opencode-ai@latest
-
 WORKDIR /app
 
-# Install app dependencies first for better layer caching
+# Install app dependencies first for better layer caching. This includes the
+# OpenCode CLI at the exact version pinned in package-lock.json.
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
+ENV PATH=/app/node_modules/.bin:$PATH
 
 # App source + OpenCode provider config
 COPY opencode.json review.config.json ./
