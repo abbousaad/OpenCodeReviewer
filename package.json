@@ -20,7 +20,7 @@
     "fast-glob": "^3.3.2",
     "opencode-ai": "1.19.6",
     "picomatch": "^4.0.2",
-    "simple-git": "^4.0.2"
+    "simple-git": "^4.1.0"
   },
   "license": "MIT"
 }
