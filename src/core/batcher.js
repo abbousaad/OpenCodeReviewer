@@ -2,11 +2,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import fg from 'fast-glob';
 import { buildMatcher, resolveWithin } from './match.js';
+import { splitLines } from './chunk.js';
 
 /**
  * Walk `repoRoot`, select reviewable files via config globs, and split them
  * into size-bounded batches for standalone full-codebase review.
- * Returns { files, batches } where batch = { label, files: [{ path, content }] }.
+ * Files over the byte limit are split into line ranges. Lines longer than the
+ * limit are clipped and listed in `truncated`.
+ * Returns { files, batches, truncated } where batch = { label, files: [{ path, content }] }.
  */
 export async function buildBatches(repoRoot, config) {
   const match = buildMatcher({ include: config.include, exclude: config.exclude });
@@ -20,6 +23,7 @@ export async function buildBatches(repoRoot, config) {
     suppressErrors: true,
   });
   const files = [];
+  const truncated = [];
 
   const { maxFiles, maxBytes } = config.batch;
   const batches = [];
@@ -47,13 +51,20 @@ export async function buildBatches(repoRoot, config) {
     files.push(rel);
     const size = Buffer.byteLength(content, 'utf8');
 
-    // Oversized single file: truncate into its own batch.
+    // Oversized single file: one batch per line range so every line is reviewed.
     if (size > maxBytes) {
       flush();
-      batches.push({
-        label: `${rel} (truncated)`,
-        files: [{ path: rel, content: content.slice(0, maxBytes) }],
-      });
+      const chunks = splitLines(content, maxBytes);
+      const totalLines = chunks.at(-1).endLine;
+      for (const chunk of chunks) {
+        const range = { startLine: chunk.startLine, endLine: chunk.endLine, totalLines };
+        batches.push({
+          label: `${rel} (lines ${chunk.startLine}-${chunk.endLine} of ${totalLines})`,
+          files: [{ path: rel, content: chunk.text, ...range }],
+          truncated: chunk.truncated,
+        });
+      }
+      if (chunks.some((c) => c.truncated)) truncated.push(rel);
       continue;
     }
     if (current.files.length >= maxFiles || current.bytes + size > maxBytes) flush();
@@ -62,5 +73,5 @@ export async function buildBatches(repoRoot, config) {
   }
   flush();
 
-  return { files, batches };
+  return { files, batches, truncated };
 }

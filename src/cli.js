@@ -7,7 +7,7 @@ import { computeDiffUnits } from './core/diff.js';
 import { computePatchUnits } from './core/patch.js';
 import { readContextFile } from './core/contextFile.js';
 import { reviewDiffUnit, runUnits } from './core/reviewer.js';
-import { buildReport, writeReportFiles, renderMarkdown } from './core/report.js';
+import { buildReport, writeReportFiles, renderMarkdown, truncationWarning } from './core/report.js';
 
 async function ciMode(repoRoot, options) {
   const config = loadConfig();
@@ -27,6 +27,10 @@ async function ciMode(repoRoot, options) {
     ? await computePatchUnits(path.resolve(options.diff), config)
     : await computeDiffUnits(repoRoot, ctx, config);
   console.log(`[OpenCodeReviewer] ${files.length} changed file(s) to review in ${units.length} batch(es)`);
+  const truncatedFiles = [...new Set(units.filter((u) => u.truncated).flatMap((u) => u.files))];
+  if (truncatedFiles.length) {
+    console.warn(`[OpenCodeReviewer] ⚠️  ${truncationWarning(truncatedFiles)}`);
+  }
 
   const context = readContextFile(repoRoot, config);
   if (!context.found) {
@@ -57,7 +61,7 @@ async function ciMode(repoRoot, options) {
 
   const report = buildReport({
     mode: 'ci',
-    meta: { description: ctx.description, kind: ctx.kind, changedFiles: files },
+    meta: { description: ctx.description, kind: ctx.kind, changedFiles: files, truncatedFiles },
     results,
     contextWarning: context.warning,
     config,

@@ -14,7 +14,7 @@ const DEFAULTS = {
   batch: { maxFiles: 6, maxBytes: 48000 },
   diff: { maxHunkBytesPerCall: 48000 },
   include: ['**/*.{js,jsx,ts,tsx,mjs,cjs,py,go,rb,rs,java,kt,php,c,cc,cpp,h,hpp,cs,swift,scala,sh,sql,vue,svelte}'],
-  exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'],
+  exclude: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**', '**/*.min.*'],
 };
 
 let cached = null;

@@ -24,14 +24,16 @@ export async function runOpenCode(prompt, model) {
       const { stdout } = await execFileP('opencode', ['run', '--help'], { env, timeout });
       runOptions = /^\s*--standalone\b/m.test(stdout) ? ['--standalone'] : [];
     }
-    const args = ['run', ...runOptions, '--format', 'json', '-m', model, prompt];
+    const args = ['run', ...runOptions, '--format', 'json', '-m', model];
     const invocation = execFileP('opencode', args, {
       env,
       timeout,
       maxBuffer: 32 * 1024 * 1024,
     });
-    // The prompt is an argument. Close stdin so headless OpenCode can finish reading it.
-    invocation.child.stdin.end();
+    // Send the prompt on stdin: Linux caps one argument at 128 KiB (E2BIG).
+    // A write error means OpenCode exited early, which the exit status reports.
+    invocation.child.stdin.on('error', () => {});
+    invocation.child.stdin.end(prompt);
     ({ stdout } = await invocation);
   } catch (err) {
     // Node's error message can include the prompt from the command arguments.
