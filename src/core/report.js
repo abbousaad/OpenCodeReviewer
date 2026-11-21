@@ -61,6 +61,11 @@ function sortFindings(findings) {
   });
 }
 
+/** Warning for files whose over-long lines were clipped before review. */
+export function truncationWarning(files) {
+  return `Lines over the batch size limit were clipped before review in: ${files.join(', ')}`;
+}
+
 /** Render the report as markdown. */
 export function renderMarkdown(report) {
   const lines = [];
@@ -86,6 +91,10 @@ export function renderMarkdown(report) {
 
   if (report.contextWarning) {
     lines.push(`> ⚠️ **${report.contextWarning}**`);
+    lines.push('');
+  }
+  if (report.meta?.truncatedFiles?.length) {
+    lines.push(`> ⚠️ **${truncationWarning(report.meta.truncatedFiles)}**`);
     lines.push('');
   }
 

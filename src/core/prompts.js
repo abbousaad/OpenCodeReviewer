@@ -62,10 +62,16 @@ ${diffText}
 ${FINDING_SCHEMA}`;
 }
 
+// A part of a split file: tell the model where it sits so reported lines match the file.
+function lineRange(f) {
+  if (!f.startLine) return '';
+  return ` (lines ${f.startLine}-${f.endLine} of ${f.totalLines}; the first line shown is line ${f.startLine})`;
+}
+
 /** Prompt for reviewing a batch of whole files (standalone mode). */
 export function batchReviewPrompt({ files, contextText }) {
   const body = files
-    .map((f) => `--- FILE: ${f.path} ---\n${f.content}`)
+    .map((f) => `--- FILE: ${f.path}${lineRange(f)} ---\n${f.content}`)
     .join('\n\n');
   return `You are a senior code reviewer. Review the following source files for correctness,
 security, performance, maintainability, and alignment with the documented architecture.

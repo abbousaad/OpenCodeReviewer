@@ -4,7 +4,7 @@ import { loadConfig } from './config.js';
 import { buildBatches } from './batcher.js';
 import { readContextFile } from './contextFile.js';
 import { reviewBatch, runUnits } from './reviewer.js';
-import { buildReport } from './report.js';
+import { buildReport, truncationWarning } from './report.js';
 
 /**
  * In-memory registry of standalone review jobs. Each job streams progress
@@ -73,9 +73,10 @@ async function run(job) {
   job.status = 'running';
   emit(job, { type: 'status', status: 'running' });
 
-  const { files, batches } = await buildBatches(job.repoRoot, job.config);
+  const { files, batches, truncated } = await buildBatches(job.repoRoot, job.config);
   job.progress.total = batches.length;
   emit(job, { type: 'plan', files: files.length, batches: batches.length });
+  if (truncated.length) emit(job, { type: 'warning', message: truncationWarning(truncated) });
 
   const context = readContextFile(job.repoRoot, job.config);
   if (!context.found) {
@@ -109,7 +110,7 @@ async function run(job) {
 
   job.report = buildReport({
     mode: 'standalone',
-    meta: { description: `Full review of ${job.repoRoot}`, reviewedFiles: files },
+    meta: { description: `Full review of ${job.repoRoot}`, reviewedFiles: files, truncatedFiles: truncated },
     results,
     contextWarning: context.warning,
     config: job.config,

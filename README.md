@@ -87,8 +87,10 @@ docker run --rm -p 127.0.0.1:3000:3000 \
 Open http://127.0.0.1:3000 and sign in as `review` using `REVIEW_PASSWORD`.
 The dashboard defaults to `/repo` in Docker and accepts directories within that
 mount. It streams batch progress and lets you download the report. Start with a
-small repo. The current batcher truncates individual files or diffs over the
-configured size limits.
+small repo. Files and diffs over the configured size limits are split into
+several batches: files by line range, diffs by hunk. Only a single line longer
+than the limit, such as minified code, is clipped, and the report lists the
+affected files.
 
 ## CI mode (one-shot, exit-code gate)
 

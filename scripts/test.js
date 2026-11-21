@@ -5,6 +5,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { buildBatches } from '../src/core/batcher.js';
+import { splitLines } from '../src/core/chunk.js';
+import { batchDiffs } from '../src/core/diff.js';
 
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'oc-reviewer-'));
@@ -20,10 +23,12 @@ if (args[1] === '--help') {
   console.log(standalone ? '  --standalone   Run with a private server' : 'opencode run [message..]');
   process.exit(0);
 }
-require('node:fs').readFileSync(0, 'utf8');
+const prompt = require('node:fs').readFileSync(0, 'utf8');
 if (args.includes('--standalone') !== standalone) process.exit(2);
 if (args[args.indexOf('--format') + 1] !== 'json') process.exit(2);
-const [model, prompt] = args.slice(args.indexOf('-m') + 1);
+// The prompt must arrive on stdin, never as an argument.
+if (args.indexOf('-m') !== args.length - 2) process.exit(2);
+const model = args.at(-1);
 for (const rule of ['A10:2025', 'API1:2023', 'API10:2023']) {
   if (!prompt.includes(rule)) process.exit(2);
 }
@@ -246,4 +251,71 @@ test('dashboard protects review jobs and uses the model selected for each job', 
       totalTokens: 660,
     });
   }
+});
+
+test('oversized files are split into line ranges instead of truncated', async (t) => {
+  const { repo } = fixture(t);
+  const lines = Array.from({ length: 400 }, (_, i) => `export const v${i} = 'é${i}';\n`);
+  writeFileSync(path.join(repo, 'big.js'), lines.join(''));
+  writeFileSync(path.join(repo, 'small.js'), 'export const small = 1;\n');
+  writeFileSync(path.join(repo, 'minified.js'), 'x'.repeat(5000) + '\nok();\n');
+
+  const config = { include: ['**/*.js'], exclude: [], batch: { maxFiles: 6, maxBytes: 2000 } };
+  const { batches, truncated } = await buildBatches(repo, config);
+  const parts = batches.flatMap(b => b.files).filter(f => f.path === 'big.js');
+  assert.ok(parts.length > 1);
+  assert.equal(parts.map(f => f.content).join(''), lines.join(''));
+  let next = 1;
+  for (const part of parts) {
+    assert.ok(Buffer.byteLength(part.content) <= 2000);
+    assert.equal(part.startLine, next);
+    assert.equal(part.totalLines, 400);
+    next = part.endLine + 1;
+  }
+  assert.equal(next, 401);
+  assert.deepEqual(truncated, ['minified.js']);
+
+  const [clipped] = splitLines('€'.repeat(10), 7);
+  assert.equal(clipped.text, '€€');
+  assert.equal(clipped.truncated, true);
+});
+
+test('oversized diffs are split into valid hunks covering every change', (t) => {
+  const { repo } = fixture(t);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' });
+  const oldLines = Array.from({ length: 600 }, (_, i) => `line ${i}\n`);
+  const newLines = oldLines.flatMap((line, i) => {
+    if (i % 7 === 0) return [];
+    if (i % 5 === 0) return [`changed ${i}\n`, `added ${i}\n`];
+    return [line];
+  });
+  const file = path.join(repo, 'file.txt');
+  git('init', '-q');
+  writeFileSync(file, oldLines.join(''));
+  git('add', 'file.txt');
+  writeFileSync(file, newLines.join(''));
+  const diffText = git('diff', '-U2', '--', 'file.txt');
+
+  const maxBytes = 1500;
+  const units = batchDiffs([{ file: 'file.txt', diffText }], maxBytes);
+  assert.ok(units.length > 2);
+  const header = diffText.slice(0, diffText.indexOf('\n@@') + 1);
+  units.forEach((unit, i) => {
+    assert.equal(unit.label, `file.txt (part ${i + 1}/${units.length})`);
+    assert.equal(unit.truncated, false);
+    assert.ok(unit.diffText.startsWith(header));
+    assert.ok(Buffer.byteLength(unit.diffText) <= maxBytes);
+  });
+
+  // Reassemble every part's hunks into one patch: git must accept it and reproduce the change.
+  const patch = header + units.map(u => u.diffText.slice(header.length)).join('');
+  writeFileSync(path.join(repo, 'split.patch'), patch);
+  git('checkout', '--', 'file.txt');
+  git('apply', '--unidiff-zero', 'split.patch');
+  assert.equal(readFileSync(file, 'utf8'), newLines.join(''));
+
+  const long = header + '@@ -1 +1 @@\n-a\n+' + 'b'.repeat(4000) + '\n';
+  const [clipped] = batchDiffs([{ file: 'file.txt', diffText: long }], maxBytes);
+  assert.equal(clipped.truncated, true);
+  assert.ok(Buffer.byteLength(clipped.diffText) <= maxBytes);
 });
