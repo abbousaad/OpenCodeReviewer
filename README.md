@@ -114,10 +114,17 @@ Set `REPORT_DIR` to change the output directory.
 | `--model <provider/model>` | OpenCode model for this run. Overrides `OC_MODEL` and config files. |
 | `--config <file>` | Extra config file, applied over the bundled and repository files. See [Configuration](#configuration-reviewconfigjson). |
 | `--concurrency <1-16>` | Batches reviewed at the same time. Overrides `concurrency` in config files. |
+| `--dry-run` | Show the batches, their files and estimated input tokens, then exit `0` without calling the model or writing reports. |
 
 ```bash
 opencodereviewer ci /repo --gate critical --model deepseek/deepseek-v4-pro
 ```
+
+Use `--dry-run` to check include and exclude rules and the size of a review
+before paying for it. It runs the same scope, filter and context steps as a
+real review, so it also fails with exit `2` when `contextFileRequired` is set
+and no context file is found. Token estimates assume about 4 bytes per token
+and cover only the prompts sent, not the output or retries.
 
 ### Explicit Git revisions
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -543,4 +543,46 @@ test('CI reviews diff batches in parallel up to --concurrency', { timeout: 20000
     assert.deepEqual(report.findings.map((f) => f.file), report.findings.map((f) => f.file).toSorted());
     assert.equal(report.findings.length, 6);
   }
+});
+
+test('CI --dry-run lists the batches a real run reviews without calling the model', { timeout: 20000 }, (t) => {
+  const { root, repo, env } = fixture(t);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  const commit = () => git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture', '--allow-empty');
+  git('init', '-q');
+  commit();
+  for (let i = 1; i <= 4; i++) writeFileSync(path.join(repo, `file-${i}.js`), `export const value${i} = ${i};\n`);
+  writeFileSync(path.join(repo, 'skipped.js'), 'export const skipped = true;\n');
+  writeFileSync(path.join(repo, 'BUSINESS_LOGIC.md'), 'OWNER_ACCESS_RULE');
+  git('add', '.');
+  commit();
+  const explicit = path.join(root, 'ci.config.json');
+  writeFileSync(explicit, JSON.stringify({ diff: { maxHunkBytesPerCall: 400 }, exclude: ['skipped.js'] }));
+  const reports = path.join(root, 'reports');
+  mkdirSync(reports);
+  const tracePath = path.join(root, 'trace.log');
+  const ci = (...args) => spawnSync(process.execPath, ['src/cli.js', 'ci', repo, '--base', 'HEAD^', '--config', explicit, ...args], {
+    env: { ...env, REPORT_DIR: reports, MOCK_STANDALONE: '0', MOCK_REPLY: '', MOCK_TRACE: tracePath },
+    encoding: 'utf8',
+    timeout: 15000,
+  });
+
+  const dry = ci('--dry-run');
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.throws(() => readFileSync(tracePath), { code: 'ENOENT' });
+  assert.deepEqual(readdirSync(reports), []);
+  assert.match(dry.stdout, /dry run: no model calls, no report files/);
+  assert.match(dry.stdout, /using context: BUSINESS_LOGIC\.md/);
+  assert.doesNotMatch(dry.stdout, /skipped\.js/);
+  const planned = [...dry.stdout.matchAll(/batch \d+\/\d+: (.+) — \d+ file\(s\), [\d.]+ KB diff, ~([\d,]+) input tokens/g)];
+  assert.ok(planned.length > 1);
+  const listed = [...dry.stdout.matchAll(/^ {4}(\S+)$/gm)].map((m) => m[1]).sort();
+  assert.deepEqual(listed, ['file-1.js', 'file-2.js', 'file-3.js', 'file-4.js']);
+  const total = Number(dry.stdout.match(/total: ~([\d,]+) estimated input tokens/)[1].replaceAll(',', ''));
+  assert.equal(total, planned.reduce((sum, m) => sum + Number(m[2].replaceAll(',', '')), 0));
+
+  const real = ci();
+  assert.equal(real.status, 0, real.stderr);
+  const reviewed = [...real.stdout.matchAll(/\[\d+\/\d+ done\] (.+) — /g)].map((m) => m[1]).sort();
+  assert.deepEqual(reviewed, planned.map((m) => m[1]).sort());
 });

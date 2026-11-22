@@ -7,6 +7,7 @@ import { computeDiffUnits } from './core/diff.js';
 import { computePatchUnits } from './core/patch.js';
 import { readContextFile } from './core/contextFile.js';
 import { reviewDiffUnit, runUnits } from './core/reviewer.js';
+import { diffReviewPrompt } from './core/prompts.js';
 import { buildReport, writeReportFiles, renderMarkdown, truncationWarning } from './core/report.js';
 
 async function ciMode(repoRoot, options, config) {
@@ -42,6 +43,11 @@ async function ciMode(repoRoot, options, config) {
     }
   } else {
     console.log(`[OpenCodeReviewer] using context: ${context.paths.join(', ')}`);
+  }
+
+  if (options['dry-run']) {
+    printPlan(units, context.text);
+    return;
   }
 
   let results = [];
@@ -87,10 +93,30 @@ async function ciMode(repoRoot, options, config) {
   console.log('[OpenCodeReviewer] ✅ gate passed.');
 }
 
+// A rough average for source code; real counts depend on the model's tokenizer.
+const BYTES_PER_TOKEN = 4;
+
+/** Show what a review would send, without calling the model or writing reports. */
+function printPlan(units, contextText) {
+  console.log('[OpenCodeReviewer] dry run: no model calls, no report files.');
+  let total = 0;
+  units.forEach((unit, i) => {
+    const prompt = diffReviewPrompt({ diffText: unit.diffText, contextText });
+    const tokens = Math.ceil(Buffer.byteLength(prompt, 'utf8') / BYTES_PER_TOKEN);
+    const diffKb = (Buffer.byteLength(unit.diffText, 'utf8') / 1024).toFixed(1);
+    total += tokens;
+    console.log(`[OpenCodeReviewer] batch ${i + 1}/${units.length}: ${unit.label} — ${unit.files.length} file(s), ` +
+      `${diffKb} KB diff, ~${tokens.toLocaleString('en-US')} input tokens`);
+    for (const file of unit.files) console.log(`    ${file}`);
+  });
+  console.log(`[OpenCodeReviewer] total: ~${total.toLocaleString('en-US')} estimated input tokens in ${units.length} batch(es) ` +
+    `(about ${BYTES_PER_TOKEN} bytes per token; output and retries not included).`);
+}
+
 async function main() {
   const usage = `Usage: opencodereviewer ci [repoPath] [--base <ref> [--head <ref>] [--merge-base] | --diff <file>]
                            [--gate <${SEVERITY_ORDER.join('|')}>] [--model <provider/model>] [--config <file>]
-                           [--concurrency <1-${MAX_CONCURRENCY}>]`;
+                           [--concurrency <1-${MAX_CONCURRENCY}>] [--dry-run]`;
   let options, cmd, repoPath;
   try {
     const { values, positionals } = parseArgs({
@@ -103,6 +129,7 @@ async function main() {
         model: { type: 'string' },
         config: { type: 'string' },
         concurrency: { type: 'string' },
+        'dry-run': { type: 'boolean' },
         help: { type: 'boolean', short: 'h' },
       },
       allowPositionals: true,
