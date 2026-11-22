@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sign in — OpenCodeReviewer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>🔍 OpenCodeReviewer</h1>
+      <p class="subtitle">OpenCode-powered code review · standalone batch mode</p>
+    </header>
+
+    <main class="narrow">
+      <section class="panel" id="login-panel">
+        <h2>Sign in</h2>
+        <form id="login-form">
+          <label>
+            Username
+            <input id="username" name="username" autocomplete="username" value="ocr-admin" required />
+          </label>
+          <label>
+            Password
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">Sign in</button>
+        </form>
+      </section>
+
+      <section class="panel hidden" id="change-panel">
+        <h2>Set a new password</h2>
+        <p class="hint">You signed in with the default password. Choose a new one of at least 12 characters to continue.</p>
+        <form id="change-form">
+          <label>
+            Current password
+            <input id="current-password" type="password" autocomplete="current-password" required />
+          </label>
+          <label>
+            New password
+            <input id="new-password" type="password" autocomplete="new-password" minlength="12" required />
+          </label>
+          <label>
+            Confirm new password
+            <input id="confirm-password" type="password" autocomplete="new-password" minlength="12" required />
+          </label>
+          <button type="submit">Save password</button>
+        </form>
+      </section>
+
+      <div id="banner" class="banner hidden" role="alert"></div>
+    </main>
+
+    <script src="login.js"></script>
+  </body>
+</html>

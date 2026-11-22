@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -70,7 +71,32 @@ if (reply === 'malformed' || (reply === 'retry-major' && !prompt.includes('OUTPU
   emit('text', { text: text.slice(7) });
 }
 `, { mode: 0o755 });
-  return { root, repo, env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` } };
+  const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, DATA_DIR: path.join(root, 'data') };
+  delete env.REVIEW_PASSWORD;
+  return { root, repo, env };
+}
+
+async function startDashboard(t, env) {
+  const server = spawn(process.execPath, ['src/server.js'], {
+    env: { HOST: '127.0.0.1', PORT: '0', ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  server.stderr.on('data', (data) => { stderr += data; });
+  t.after(() => server.kill());
+  // The data directory line comes last in the startup output.
+  const started = new Promise((resolve) => server.stdout.on('data', (data) => {
+    stdout += data;
+    if (stdout.includes('data directory:')) resolve();
+  }));
+  await Promise.race([
+    started,
+    once(server, 'exit').then(([code]) => assert.fail(`Dashboard exited with status ${code}: ${stderr}`)),
+  ]);
+  const base = stdout.match(/http:\/\/127\.0\.0\.1:\d+/)?.[0];
+  assert.ok(base);
+  return { base, server, stdout };
 }
 
 test('CI checks quoted filenames and fails closed', (t) => {
@@ -217,28 +243,17 @@ test('dashboard protects review jobs and uses the model selected for each job', 
     writeFileSync(path.join(repo, `extra-${i}.js`), '// Batch fixture\n');
   }
 
-  const server = spawn(process.execPath, ['src/server.js'], {
-    env: {
-      ...env,
-      REPO_DIR: repo,
-      HOST: '127.0.0.1',
-      PORT: '0',
-      REVIEW_PASSWORD: 'test-password',
-      SEVERITY_GATE: 'major',
-      MOCK_REPLY: 'minor',
-      MOCK_CONTEXT: 'OWNER_ACCESS_RULE',
-      MOCK_STANDALONE: '1',
-    },
-    stdio: ['ignore', 'pipe', 'inherit'],
+  const { base } = await startDashboard(t, {
+    ...env,
+    REPO_DIR: repo,
+    REVIEW_PASSWORD: 'test-password',
+    SEVERITY_GATE: 'major',
+    MOCK_REPLY: 'minor',
+    MOCK_CONTEXT: 'OWNER_ACCESS_RULE',
+    MOCK_STANDALONE: '1',
   });
-  t.after(() => server.kill());
-  const base = await Promise.race([
-    once(server.stdout, 'data').then(([data]) => data.toString().match(/http:\/\/127\.0\.0\.1:\d+/)?.[0]),
-    once(server, 'exit').then(([code]) => assert.fail(`Dashboard exited with status ${code}`)),
-  ]);
-  assert.ok(base);
   const endpoint = base + '/api/review';
-  const authorization = 'Basic ' + Buffer.from('review:test-password').toString('base64');
+  const authorization = 'Basic ' + Buffer.from('ocr-admin:test-password').toString('base64');
   const headers = { authorization };
   const post = (repoRoot, model, severityGate) => fetch(endpoint, {
     method: 'POST',
@@ -585,4 +600,114 @@ test('CI --dry-run lists the batches a real run reviews without calling the mode
   assert.equal(real.status, 0, real.stderr);
   const reviewed = [...real.stdout.matchAll(/\[\d+\/\d+ done\] (.+) — /g)].map((m) => m[1]).sort();
   assert.deepEqual(reviewed, planned.map((m) => m[1]).sort());
+});
+
+test('dashboard requires a new password before the default login can do anything', { timeout: 20000 }, async (t) => {
+  const { repo, env } = fixture(t);
+  const dashboardEnv = { ...env, REPO_DIR: repo };
+  let { base, server, stdout } = await startDashboard(t, dashboardEnv);
+  const json = { 'content-type': 'application/json' };
+  const login = (password, headers = {}) => fetch(base + '/api/auth/login', {
+    method: 'POST', headers: { ...json, ...headers }, body: JSON.stringify({ username: 'ocr-admin', password }),
+  });
+  const cookieOf = (res) => res.headers.get('set-cookie').split(';')[0];
+
+  assert.match(stdout, /Sign in as ocr-admin \/ ocr-admin/);
+  assert.equal((await fetch(base + '/api/review')).status, 401);
+  const page = await fetch(base + '/', { redirect: 'manual' });
+  assert.equal(page.status, 302);
+  assert.equal(page.headers.get('location'), '/login.html');
+  assert.equal((await fetch(base + '/login.html')).status, 200);
+  assert.match((await fetch(base + '/login.html')).headers.get('content-security-policy'), /default-src 'self'/);
+
+  // DNS rebinding pages use their own hostname; cross-origin and non-JSON posts are refused.
+  // fetch() drops a custom Host header, so send this one with node:http.
+  const rebound = await new Promise((resolve, reject) => {
+    http.get(base + '/login.html', { headers: { host: 'evil.example:80' } }, (res) => {
+      res.resume();
+      resolve(res.statusCode);
+    }).on('error', reject);
+  });
+  assert.equal(rebound, 403);
+  assert.equal((await login('ocr-admin', { origin: 'http://evil.example' })).status, 403);
+  const form = await fetch(base + '/api/auth/login', {
+    method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'username=ocr-admin',
+  });
+  assert.equal(form.status, 415);
+
+  const first = await login('ocr-admin');
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), { mustChangePassword: true, passwordFromEnv: false });
+  const setCookie = first.headers.get('set-cookie');
+  assert.match(setCookie, /HttpOnly/);
+  assert.match(setCookie, /SameSite=Strict/);
+  const cookie = cookieOf(first);
+  const blocked = await fetch(base + '/api/review', { headers: { cookie } });
+  assert.equal(blocked.status, 403);
+  assert.equal((await blocked.json()).mustChangePassword, true);
+  const basicDefault = 'Basic ' + Buffer.from('ocr-admin:ocr-admin').toString('base64');
+  assert.equal((await fetch(base + '/api/review', { headers: { authorization: basicDefault } })).status, 403);
+
+  const change = (currentPassword, newPassword) => fetch(base + '/api/auth/password', {
+    method: 'POST', headers: { ...json, cookie }, body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  assert.equal((await change('ocr-admin', 'too-short')).status, 400);
+  assert.equal((await change('wrong', 'a-new-long-password')).status, 400);
+  assert.equal((await change('ocr-admin', 'ocr-admin')).status, 400);
+  const changed = await change('ocr-admin', 'a-new-long-password');
+  assert.equal(changed.status, 200);
+  assert.equal((await changed.json()).mustChangePassword, false);
+  assert.equal((await fetch(base + '/api/review', { headers: { cookie } })).status, 200);
+  assert.equal((await fetch(base + '/', { headers: { cookie } })).status, 200);
+  const saved = JSON.parse(readFileSync(path.join(env.DATA_DIR, 'auth.json'), 'utf8'));
+  assert.equal(saved.username, 'ocr-admin');
+  assert.ok(!JSON.stringify(saved).includes('a-new-long-password'));
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(path.join(env.DATA_DIR, 'auth.json')).mode & 0o777, 0o600);
+  }
+
+  const logout = await fetch(base + '/api/auth/logout', { method: 'POST', headers: { ...json, cookie }, body: '{}' });
+  assert.equal(logout.status, 200);
+  assert.equal((await fetch(base + '/api/review', { headers: { cookie } })).status, 401);
+
+  // The new password survives a restart, and the default no longer works.
+  server.kill();
+  await once(server, 'exit');
+  ({ base, server, stdout } = await startDashboard(t, dashboardEnv));
+  assert.doesNotMatch(stdout, /Sign in as ocr-admin/);
+  assert.equal((await login('ocr-admin')).status, 401);
+  const again = await login('a-new-long-password');
+  assert.equal(again.status, 200);
+  assert.equal((await again.json()).mustChangePassword, false);
+  const basic = 'Basic ' + Buffer.from('ocr-admin:a-new-long-password').toString('base64');
+  assert.equal((await fetch(base + '/api/review', { headers: { authorization: basic } })).status, 200);
+
+  // Five failures lock the address out, even for the right password.
+  for (let i = 0; i < 4; i++) assert.equal((await login('wrong-password')).status, 401);
+  const locked = await login('wrong-password');
+  assert.equal(locked.status, 429);
+  assert.ok(Number(locked.headers.get('retry-after')) > 0);
+  assert.equal((await login('a-new-long-password')).status, 429);
+});
+
+test('REVIEW_PASSWORD replaces the default login and cannot be changed in the dashboard', { timeout: 10000 }, async (t) => {
+  const { repo, env } = fixture(t);
+  const { base, stdout } = await startDashboard(t, { ...env, REPO_DIR: repo, REVIEW_PASSWORD: 'from-the-environment' });
+  assert.doesNotMatch(stdout, /Sign in as ocr-admin/);
+  const json = { 'content-type': 'application/json' };
+  assert.equal((await fetch(base + '/api/auth/login', {
+    method: 'POST', headers: json, body: JSON.stringify({ username: 'ocr-admin', password: 'ocr-admin' }),
+  })).status, 401);
+  const res = await fetch(base + '/api/auth/login', {
+    method: 'POST', headers: json, body: JSON.stringify({ username: 'ocr-admin', password: 'from-the-environment' }),
+  });
+  assert.deepEqual(await res.json(), { mustChangePassword: false, passwordFromEnv: true });
+  const cookie = res.headers.get('set-cookie').split(';')[0];
+  const change = await fetch(base + '/api/auth/password', {
+    method: 'POST',
+    headers: { ...json, cookie },
+    body: JSON.stringify({ currentPassword: 'from-the-environment', newPassword: 'another-long-password' }),
+  });
+  assert.equal(change.status, 409);
+  assert.throws(() => readFileSync(path.join(env.DATA_DIR, 'auth.json')), { code: 'ENOENT' });
 });

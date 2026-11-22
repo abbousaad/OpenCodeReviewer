@@ -29,7 +29,11 @@ ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=3000 \
     REPO_DIR=/repo \
+    DATA_DIR=/data \
     OPENCODE_CONFIG=/app/opencode.json
+
+# Password hash now; settings and review history later.
+VOLUME /data
 
 EXPOSE 3000
 
