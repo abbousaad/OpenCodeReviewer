@@ -19,12 +19,15 @@ export async function runOpenCode(prompt, model) {
   let stdout = '';
   let failure;
   try {
-    if (!runOptions) {
-      // OpenCode 1.x runs privately by default. OpenCode 2.x exposes this flag.
-      const { stdout } = await execFileP('opencode', ['run', '--help'], { env, timeout });
-      runOptions = /^\s*--standalone\b/m.test(stdout) ? ['--standalone'] : [];
-    }
-    const args = ['run', ...runOptions, '--format', 'json', '-m', model];
+    // OpenCode 1.x runs privately by default. OpenCode 2.x exposes this flag.
+    // Parallel batches share one check; a failed check is retried next time.
+    runOptions ??= execFileP('opencode', ['run', '--help'], { env, timeout })
+      .then(({ stdout }) => (/^\s*--standalone\b/m.test(stdout) ? ['--standalone'] : []))
+      .catch((err) => {
+        runOptions = undefined;
+        throw err;
+      });
+    const args = ['run', ...(await runOptions), '--format', 'json', '-m', model];
     const invocation = execFileP('opencode', args, {
       env,
       timeout,

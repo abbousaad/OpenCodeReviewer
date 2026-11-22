@@ -9,6 +9,7 @@ import { buildBatches } from '../src/core/batcher.js';
 import { splitLines } from '../src/core/chunk.js';
 import { ConfigError, loadConfig } from '../src/core/config.js';
 import { batchDiffs } from '../src/core/diff.js';
+import { runUnits } from '../src/core/reviewer.js';
 
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'oc-reviewer-'));
@@ -20,7 +21,10 @@ function fixture(t) {
   writeFileSync(path.join(bin, 'opencode'), `#!/usr/bin/env node
 const args = process.argv.slice(2);
 const standalone = process.env.MOCK_STANDALONE === '1';
+const trace = (event) => process.env.MOCK_TRACE
+  && require('node:fs').appendFileSync(process.env.MOCK_TRACE, event + ' ' + Date.now() + '\\n');
 if (args[1] === '--help') {
+  trace('help');
   console.log(standalone ? '  --standalone   Run with a private server' : 'opencode run [message..]');
   process.exit(0);
 }
@@ -37,6 +41,11 @@ for (const expected of (process.env.MOCK_CONTEXT || '').split(',').filter(Boolea
   if (!prompt.includes(expected)) process.exit(2);
 }
 const reply = process.env.MOCK_REPLY;
+trace('start');
+if (process.env.MOCK_DELAY_MS) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.MOCK_DELAY_MS));
+}
+trace('end');
 const emit = (type, part) => console.log(JSON.stringify({ type, part }));
 if (reply !== 'no-usage') {
   for (const [id, reason] of [['one', 'tool-calls'], ['two', 'stop']]) {
@@ -360,6 +369,7 @@ test('config layers apply in order and the reviewed repo cannot set the gate or 
     batch: { maxFiles: 2 },
     severityGate: 'critical',
     model: 'attacker/model',
+    concurrency: 16,
   }));
   const fromRepo = loadConfig({ repoRoot: repo });
   assert.deepEqual(fromRepo.exclude, ['**/skip/**']);
@@ -368,7 +378,8 @@ test('config layers apply in order and the reviewed repo cannot set the gate or 
   assert.equal(fromRepo.model, 'deepseek/deepseek-flash');
   assert.equal(fromRepo.sources.at(-1), realpathSync(path.join(repo, 'review.config.json')));
   assert.equal(fromRepo.warnings.length, 1);
-  assert.match(fromRepo.warnings[0], /ignored severityGate, model/);
+  assert.equal(fromRepo.concurrency, 3);
+  assert.match(fromRepo.warnings[0], /ignored severityGate, model, concurrency/);
 
   const explicit = path.join(root, 'ci.config.json');
   writeFileSync(explicit, JSON.stringify({ severityGate: 'minor', batch: { maxBytes: 1000 } }));
@@ -404,6 +415,7 @@ test('config layers apply in order and the reviewed repo cannot set the gate or 
     ['{"batch": {"maxFiles": 0}}', /batch\.maxFiles must be a positive integer/],
     ['{"include": "**/*.js"}', /include must be a list of nonempty strings/],
     ['{"severityGate": "typo"}', /severityGate must be one of/],
+    ['{"concurrency": 0}', /concurrency must be an integer from 1 to 16/],
   ]) {
     writeFileSync(explicit, content);
     assert.throws(() => loadConfig({ configPath: explicit }), (err) => err instanceof ConfigError && message.test(err.message));
@@ -448,11 +460,87 @@ test('CI flags override the environment, and invalid flags or config exit 2', (t
     [['--gate', 'typo'], /--gate must be one of/],
     [['--model', 'no-slash'], /--model must be in provider\/model format/],
     [['--config', ''], /require nonempty values/],
+    [['--concurrency', '0'], /--concurrency must be an integer from 1 to 16/],
+    [['--concurrency', '17'], /--concurrency must be an integer from 1 to 16/],
+    [['--concurrency', '2.5'], /--concurrency must be an integer from 1 to 16/],
     [['--config', explicit], /batch\.maxFiles must be a positive integer/],
     [['--config', path.join(root, 'missing.json')], /Could not read config file/],
   ]) {
     const run = ci(args);
     assert.equal(run.status, 2, run.stderr);
     assert.match(run.stderr, message);
+  }
+});
+
+test('runUnits keeps at most `concurrency` units in flight and results in order', async () => {
+  for (const concurrency of [1, 3]) {
+    let active = 0;
+    let maxActive = 0;
+    const completed = [];
+    const units = Array.from({ length: 10 }, (_, i) => ({
+      label: `unit ${i}`,
+      run: async () => {
+        maxActive = Math.max(maxActive, ++active);
+        await new Promise((resolve) => setTimeout(resolve, (i * 7) % 20));
+        active--;
+        if (i === 4) throw new Error('boom');
+        return { label: `unit ${i}`, findings: [{ i }], summary: '' };
+      },
+    }));
+    const results = await runUnits(units, {
+      concurrency,
+      onProgress: (p) => p.phase === 'done' && completed.push(p.completed),
+    });
+    assert.equal(maxActive, concurrency);
+    assert.deepEqual(results.map((r) => r.label), units.map((u) => u.label));
+    assert.equal(results[4].error, 'boom');
+    assert.equal(results.filter((r) => r.error).length, 1);
+    assert.deepEqual(completed, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  }
+  assert.deepEqual(await runUnits([], { concurrency: 4 }), []);
+});
+
+test('CI reviews diff batches in parallel up to --concurrency', { timeout: 20000 }, (t) => {
+  const { root, repo, env } = fixture(t);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  const commit = () => git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture', '--allow-empty');
+  git('init', '-q');
+  commit();
+  for (let i = 1; i <= 6; i++) writeFileSync(path.join(repo, `file-${i}.js`), `export const value${i} = ${i};\n`);
+  git('add', '.');
+  commit();
+  // Small diff batches put each file in its own unit.
+  const explicit = path.join(root, 'ci.config.json');
+  writeFileSync(explicit, JSON.stringify({ diff: { maxHunkBytesPerCall: 200 } }));
+
+  for (const concurrency of [1, 3]) {
+    const tracePath = path.join(root, `trace-${concurrency}.log`);
+    const run = spawnSync(process.execPath, [
+      'src/cli.js', 'ci', repo, '--base', 'HEAD^', '--config', explicit, '--concurrency', String(concurrency),
+    ], {
+      env: { ...env, REPORT_DIR: repo, MOCK_STANDALONE: '0', MOCK_REPLY: 'minor', MOCK_TRACE: tracePath, MOCK_DELAY_MS: '400' },
+      encoding: 'utf8',
+      timeout: 15000,
+    });
+    assert.equal(run.status, 0, run.stderr);
+    assert.match(run.stdout, /6 changed file\(s\) to review in 6 batch\(es\)/);
+    assert.match(run.stdout, new RegExp(`concurrency=${concurrency}`));
+    assert.match(run.stdout, /\[6\/6 done\]/);
+
+    const events = readFileSync(tracePath, 'utf8').trim().split('\n').map((line) => line.split(' '));
+    assert.equal(events.filter(([type]) => type === 'help').length, 1);
+    let active = 0;
+    let maxActive = 0;
+    // On equal timestamps, count an end before a start so overlap is not overstated.
+    for (const [type] of events.filter(([type]) => type !== 'help')
+      .sort((a, b) => a[1] - b[1] || (a[0] === 'end' ? -1 : 1))) {
+      active += type === 'start' ? 1 : -1;
+      maxActive = Math.max(maxActive, active);
+    }
+    assert.equal(maxActive, concurrency);
+
+    const report = JSON.parse(readFileSync(path.join(repo, 'review-report.json'), 'utf8'));
+    assert.deepEqual(report.findings.map((f) => f.file), report.findings.map((f) => f.file).toSorted());
+    assert.equal(report.findings.length, 6);
   }
 });

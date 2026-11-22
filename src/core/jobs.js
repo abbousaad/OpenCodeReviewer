@@ -91,15 +91,17 @@ async function run(job) {
   }));
 
   const results = await runUnits(runnable, {
+    concurrency: job.config.concurrency,
     onProgress: (p) => {
       if (p.phase === 'start') {
         job.progress.current = p.label;
         emit(job, { type: 'batch-start', index: p.index, total: p.total, label: p.label });
       } else {
-        job.progress.done = p.index + 1;
+        job.progress.done = p.completed;
         emit(job, {
           type: 'batch-done',
           index: p.index,
+          completed: p.completed,
           total: p.total,
           label: p.label,
           findingCount: p.findingCount,

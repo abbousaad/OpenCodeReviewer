@@ -113,6 +113,7 @@ Set `REPORT_DIR` to change the output directory.
 | `--gate <info\|minor\|major\|critical>` | Severity gate for this run. Overrides `SEVERITY_GATE` and config files. |
 | `--model <provider/model>` | OpenCode model for this run. Overrides `OC_MODEL` and config files. |
 | `--config <file>` | Extra config file, applied over the bundled and repository files. See [Configuration](#configuration-reviewconfigjson). |
+| `--concurrency <1-16>` | Batches reviewed at the same time. Overrides `concurrency` in config files. |
 
 ```bash
 opencodereviewer ci /repo --gate critical --model deepseek/deepseek-v4-pro
@@ -212,6 +213,7 @@ jobs:
 | `severityGate`        | `info`\|`minor`\|`major`\|`critical` (env `SEVERITY_GATE`)  |
 | `contextFile(Aliases)`| Project context candidates read alongside `BUSINESS_LOGIC.md` |
 | `contextFileRequired` | If `true`, CI fails (exit 2) when neither context file is available |
+| `concurrency`         | Batches reviewed at the same time, `1` to `16` (default `3`) |
 | `batch.maxFiles/Bytes`| Standalone batch size limits                                |
 | `diff.maxHunkBytesPerCall` | CI diff grouping size limit                            |
 | `include` / `exclude` | Glob filters for which files are reviewed                   |
@@ -223,10 +225,11 @@ Settings are applied in this order, and later sources win:
 3. A `review.config.json` at the root of the reviewed directory. It can set
    only `contextFile`, `contextFileAliases`, `batch`, `diff`, `include` and
    `exclude`. Other keys are ignored with a warning, because the code under
-   review must not choose its own model, gate or context requirement.
+   review must not choose its own model, gate, context requirement or request
+   rate.
 4. The file passed with `--config`. It can set every key.
 5. The `OC_MODEL` and `SEVERITY_GATE` environment variables.
-6. The `--gate` and `--model` flags, or the dashboard form.
+6. The `--gate`, `--model` and `--concurrency` flags, or the dashboard form.
 
 Every file is validated. An unknown key, a wrong type or invalid JSON stops the
 review with exit `2` and names the file and key. In CI, keep `--config` files

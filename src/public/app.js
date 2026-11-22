@@ -63,12 +63,12 @@ function handleEvent(id, ev) {
       addLog(`context file: ${ev.path}`);
       break;
     case 'batch-start':
-      $('progress-text').textContent = `Reviewing ${ev.label} (${ev.index + 1}/${ev.total})`;
+      $('progress-text').textContent = `Reviewing ${ev.label} (batch ${ev.index + 1} of ${ev.total})`;
       break;
     case 'batch-done': {
-      const pct = Math.round(((ev.index + 1) / ev.total) * 100);
+      const pct = Math.round((ev.completed / ev.total) * 100);
       $('progress-fill').style.width = pct + '%';
-      addLog(`[${ev.index + 1}/${ev.total}] ${ev.label} — ${ev.error ? 'error' : ev.findingCount + ' finding(s)'}`);
+      addLog(`[${ev.completed}/${ev.total} done] ${ev.label} — ${ev.error ? 'error' : ev.findingCount + ' finding(s)'}`);
       break;
     }
     case 'complete':
