@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { buildBatches } from '../src/core/batcher.js';
 import { splitLines } from '../src/core/chunk.js';
+import { ConfigError, loadConfig } from '../src/core/config.js';
 import { batchDiffs } from '../src/core/diff.js';
 
 function fixture(t) {
@@ -84,7 +85,7 @@ test('CI checks quoted filenames and fails closed', (t) => {
     ['retry-major', 'major', 1],
     ['partial', 'major', 0],
     ['no-usage', 'major', 0],
-    ['critical', 'typo', 3],
+    ['critical', 'typo', 2],
   ]) {
     const run = spawnSync(process.execPath, ['src/cli.js', 'ci', repo], {
       env: {
@@ -340,4 +341,118 @@ test('oversized diffs are split into valid hunks covering every change', (t) => 
   const [clipped] = batchDiffs([{ file: 'file.txt', diffText: long }], maxBytes);
   assert.equal(clipped.truncated, true);
   assert.ok(Buffer.byteLength(clipped.diffText) <= maxBytes);
+});
+
+test('config layers apply in order and the reviewed repo cannot set the gate or model', (t) => {
+  const { root, repo } = fixture(t);
+  const saved = { OC_MODEL: process.env.OC_MODEL, SEVERITY_GATE: process.env.SEVERITY_GATE };
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  delete process.env.OC_MODEL;
+  delete process.env.SEVERITY_GATE;
+
+  writeFileSync(path.join(repo, 'review.config.json'), JSON.stringify({
+    exclude: ['**/skip/**'],
+    batch: { maxFiles: 2 },
+    severityGate: 'critical',
+    model: 'attacker/model',
+  }));
+  const fromRepo = loadConfig({ repoRoot: repo });
+  assert.deepEqual(fromRepo.exclude, ['**/skip/**']);
+  assert.deepEqual(fromRepo.batch, { maxFiles: 2, maxBytes: 48000 });
+  assert.equal(fromRepo.severityGate, 'major');
+  assert.equal(fromRepo.model, 'deepseek/deepseek-flash');
+  assert.equal(fromRepo.sources.at(-1), realpathSync(path.join(repo, 'review.config.json')));
+  assert.equal(fromRepo.warnings.length, 1);
+  assert.match(fromRepo.warnings[0], /ignored severityGate, model/);
+
+  const explicit = path.join(root, 'ci.config.json');
+  writeFileSync(explicit, JSON.stringify({ severityGate: 'minor', batch: { maxBytes: 1000 } }));
+  const withFile = loadConfig({ repoRoot: repo, configPath: explicit });
+  assert.equal(withFile.severityGate, 'minor');
+  assert.deepEqual(withFile.batch, { maxFiles: 2, maxBytes: 1000 });
+
+  process.env.SEVERITY_GATE = 'info';
+  process.env.OC_MODEL = 'env/model';
+  const withEnv = loadConfig({ repoRoot: repo, configPath: explicit });
+  assert.equal(withEnv.severityGate, 'info');
+  assert.equal(withEnv.model, 'env/model');
+  const withFlags = loadConfig({
+    repoRoot: repo,
+    configPath: explicit,
+    overrides: { severityGate: 'critical', model: 'flag/model' },
+  });
+  assert.equal(withFlags.severityGate, 'critical');
+  assert.equal(withFlags.model, 'flag/model');
+  delete process.env.SEVERITY_GATE;
+  delete process.env.OC_MODEL;
+
+  // A repo config symlinked from outside the repo is ignored.
+  rmSync(path.join(repo, 'review.config.json'));
+  symlinkSync(explicit, path.join(repo, 'review.config.json'));
+  assert.equal(loadConfig({ repoRoot: repo }).severityGate, 'major');
+  assert.deepEqual(loadConfig({ repoRoot: repo }).batch, { maxFiles: 6, maxBytes: 48000 });
+
+  for (const [content, message] of [
+    ['{bad', /is not valid JSON/],
+    ['[]', /must contain a JSON object/],
+    ['{"exlude": []}', /unknown key exlude/],
+    ['{"batch": {"maxFiles": 0}}', /batch\.maxFiles must be a positive integer/],
+    ['{"include": "**/*.js"}', /include must be a list of nonempty strings/],
+    ['{"severityGate": "typo"}', /severityGate must be one of/],
+  ]) {
+    writeFileSync(explicit, content);
+    assert.throws(() => loadConfig({ configPath: explicit }), (err) => err instanceof ConfigError && message.test(err.message));
+  }
+  assert.throws(() => loadConfig({ configPath: path.join(root, 'missing.json') }), /Could not read config file/);
+});
+
+test('CI flags override the environment, and invalid flags or config exit 2', (t) => {
+  const { root, repo, env } = fixture(t);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
+  const commit = () => git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture', '--allow-empty');
+  git('init', '-q');
+  commit();
+  writeFileSync(path.join(repo, 'changed.js'), 'export const changed = true;\n');
+  writeFileSync(path.join(repo, 'BUSINESS_LOGIC.md'), 'OWNER_ACCESS_RULE');
+  git('add', '.');
+  commit();
+  const ci = (args, extraEnv = {}) => spawnSync(process.execPath, ['src/cli.js', 'ci', repo, '--base', 'HEAD^', ...args], {
+    env: { ...env, REPORT_DIR: repo, MOCK_STANDALONE: '0', MOCK_REPLY: 'major', SEVERITY_GATE: 'critical', ...extraEnv },
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+  const report = () => JSON.parse(readFileSync(path.join(repo, 'review-report.json'), 'utf8'));
+
+  // The environment's critical gate passes a major finding. --gate major fails it.
+  assert.equal(ci([]).status, 0);
+  const flagged = ci(['--gate', 'major', '--model', 'test/flag']);
+  assert.equal(flagged.status, 1, flagged.stderr);
+  assert.equal(report().severityGate, 'major');
+  assert.equal(report().model, 'test/flag');
+  assert.equal(report().findings[0].message, 'test/flag');
+
+  const explicit = path.join(root, 'ci.config.json');
+  writeFileSync(explicit, JSON.stringify({ exclude: ['changed.js'] }));
+  const excluded = ci(['--config', explicit]);
+  assert.equal(excluded.status, 0, excluded.stderr);
+  assert.deepEqual(report().meta.changedFiles, []);
+  assert.match(excluded.stdout, /config: .*ci\.config\.json/);
+
+  writeFileSync(explicit, '{"batch": {"maxFiles": "six"}}');
+  for (const [args, message] of [
+    [['--gate', 'typo'], /--gate must be one of/],
+    [['--model', 'no-slash'], /--model must be in provider\/model format/],
+    [['--config', ''], /require nonempty values/],
+    [['--config', explicit], /batch\.maxFiles must be a positive integer/],
+    [['--config', path.join(root, 'missing.json')], /Could not read config file/],
+  ]) {
+    const run = ci(args);
+    assert.equal(run.status, 2, run.stderr);
+    assert.match(run.stderr, message);
+  }
 });

@@ -3,7 +3,7 @@ import path from 'node:path';
 import express from 'express';
 import { startReview, getJob, listJobs, publicView } from '../core/jobs.js';
 import { renderMarkdown } from '../core/report.js';
-import { loadConfig, SEVERITY_ORDER } from '../core/config.js';
+import { ConfigError, loadConfig, MODEL_PATTERN, SEVERITY_ORDER } from '../core/config.js';
 import { resolveWithin } from '../core/match.js';
 
 const router = express.Router();
@@ -30,7 +30,7 @@ router.post('/review', (req, res) => {
   if (severityGate !== undefined && !SEVERITY_ORDER.includes(severityGate)) {
     return res.status(400).json({ error: `Use a severity gate of ${SEVERITY_ORDER.join(', ')}.` });
   }
-  if (model !== undefined && (typeof model !== 'string' || !/^[\w.][\w.-]*\/[^\s\0]+$/.test(model))) {
+  if (model !== undefined && (typeof model !== 'string' || !MODEL_PATTERN.test(model))) {
     return res.status(400).json({ error: 'Model must be in provider/model format.' });
   }
 
@@ -47,7 +47,13 @@ router.post('/review', (req, res) => {
   if (severityGate) overrides.severityGate = severityGate;
   if (model) overrides.model = model;
 
-  const job = startReview({ repoRoot: resolvedRoot, overrides });
+  let job;
+  try {
+    job = startReview({ repoRoot: resolvedRoot, overrides });
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    return res.status(400).json({ error: err.message });
+  }
   res.status(202).json(job);
 });
 

@@ -103,10 +103,20 @@ docker run --rm \
 ```
 
 Exits `0` for a completed review that passes the severity gate and `1` when a
-finding meets or exceeds the gate (default `major`). Exits `3` for invalid
-configuration, other fatal errors, or an incomplete review. CI writes reports
+finding meets or exceeds the gate (default `major`). Exits `2` for invalid
+flags or configuration, and `3` for other fatal errors or an incomplete review. CI writes reports
 to the repo directory by default, including partial results when a batch fails.
 Set `REPORT_DIR` to change the output directory.
+
+| Flag | Meaning |
+| --- | --- |
+| `--gate <info\|minor\|major\|critical>` | Severity gate for this run. Overrides `SEVERITY_GATE` and config files. |
+| `--model <provider/model>` | OpenCode model for this run. Overrides `OC_MODEL` and config files. |
+| `--config <file>` | Extra config file, applied over the bundled and repository files. See [Configuration](#configuration-reviewconfigjson). |
+
+```bash
+opencodereviewer ci /repo --gate critical --model deepseek/deepseek-v4-pro
+```
 
 ### Explicit Git revisions
 
@@ -205,6 +215,22 @@ jobs:
 | `batch.maxFiles/Bytes`| Standalone batch size limits                                |
 | `diff.maxHunkBytesPerCall` | CI diff grouping size limit                            |
 | `include` / `exclude` | Glob filters for which files are reviewed                   |
+
+Settings are applied in this order, and later sources win:
+
+1. Built-in defaults.
+2. The `review.config.json` bundled with the reviewer.
+3. A `review.config.json` at the root of the reviewed directory. It can set
+   only `contextFile`, `contextFileAliases`, `batch`, `diff`, `include` and
+   `exclude`. Other keys are ignored with a warning, because the code under
+   review must not choose its own model, gate or context requirement.
+4. The file passed with `--config`. It can set every key.
+5. The `OC_MODEL` and `SEVERITY_GATE` environment variables.
+6. The `--gate` and `--model` flags, or the dashboard form.
+
+Every file is validated. An unknown key, a wrong type or invalid JSON stops the
+review with exit `2` and names the file and key. In CI, keep `--config` files
+outside the reviewed checkout, so a change under review cannot edit them.
 
 ## Smoke test
 
