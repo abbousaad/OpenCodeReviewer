@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { parseArgs } from 'node:util';
-import { ConfigError, MODEL_PATTERN, SEVERITY_ORDER, loadConfig } from './core/config.js';
+import { ConfigError, MAX_CONCURRENCY, MODEL_PATTERN, SEVERITY_ORDER, isConcurrency, loadConfig } from './core/config.js';
 import { detectGitContext } from './core/gitContext.js';
 import { computeDiffUnits } from './core/diff.js';
 import { computePatchUnits } from './core/patch.js';
@@ -13,7 +13,7 @@ async function ciMode(repoRoot, options, config) {
   console.log(`[OpenCodeReviewer] CI review of ${repoRoot}`);
   console.log(`[OpenCodeReviewer] config: ${config.sources.join(', ') || 'built-in defaults'}`);
   for (const warning of config.warnings) console.warn(`[OpenCodeReviewer] ⚠️  ${warning}`);
-  console.log(`[OpenCodeReviewer] model=${config.model} gate=${config.severityGate}`);
+  console.log(`[OpenCodeReviewer] model=${config.model} gate=${config.severityGate} concurrency=${config.concurrency}`);
 
   const ctx = options.diff
     ? { kind: 'patch', description: `Unified diff ${path.basename(options.diff)}` }
@@ -51,10 +51,11 @@ async function ciMode(repoRoot, options, config) {
       run: () => reviewDiffUnit(u, { config, contextText: context.text }),
     }));
     results = await runUnits(runnable, {
+      concurrency: config.concurrency,
       onProgress: (p) => {
         if (p.phase === 'done') {
           const tag = p.error ? `error: ${p.error}` : `${p.findingCount} finding(s)`;
-          console.log(`[OpenCodeReviewer] [${p.index + 1}/${p.total}] ${p.label} — ${tag}`);
+          console.log(`[OpenCodeReviewer] [${p.completed}/${p.total} done] ${p.label} — ${tag}`);
         }
       },
     });
@@ -88,7 +89,8 @@ async function ciMode(repoRoot, options, config) {
 
 async function main() {
   const usage = `Usage: opencodereviewer ci [repoPath] [--base <ref> [--head <ref>] [--merge-base] | --diff <file>]
-                           [--gate <${SEVERITY_ORDER.join('|')}>] [--model <provider/model>] [--config <file>]`;
+                           [--gate <${SEVERITY_ORDER.join('|')}>] [--model <provider/model>] [--config <file>]
+                           [--concurrency <1-${MAX_CONCURRENCY}>]`;
   let options, cmd, repoPath;
   try {
     const { values, positionals } = parseArgs({
@@ -100,6 +102,7 @@ async function main() {
         gate: { type: 'string' },
         model: { type: 'string' },
         config: { type: 'string' },
+        concurrency: { type: 'string' },
         help: { type: 'boolean', short: 'h' },
       },
       allowPositionals: true,
@@ -109,14 +112,21 @@ async function main() {
     if ((cmd && cmd !== 'ci') || positionals.length > 2) {
       throw new Error('Expected the ci command and at most one repository path');
     }
-    if ([options.base, options.head, options.diff, options.gate, options.model, options.config].includes('')) {
-      throw new Error('--base, --head, --diff, --gate, --model and --config require nonempty values');
+    if ([options.base, options.head, options.diff, options.gate, options.model, options.config, options.concurrency].includes('')) {
+      throw new Error('--base, --head, --diff, --gate, --model, --config and --concurrency require nonempty values');
     }
     if (options.gate !== undefined && !SEVERITY_ORDER.includes(options.gate)) {
       throw new Error(`--gate must be one of ${SEVERITY_ORDER.join(', ')}`);
     }
     if (options.model !== undefined && !MODEL_PATTERN.test(options.model)) {
       throw new Error('--model must be in provider/model format');
+    }
+    if (options.concurrency !== undefined) {
+      const concurrency = Number(options.concurrency);
+      if (!/^\d+$/.test(options.concurrency) || !isConcurrency(concurrency)) {
+        throw new Error(`--concurrency must be an integer from 1 to ${MAX_CONCURRENCY}`);
+      }
+      options.concurrency = concurrency;
     }
     if (options.diff && (options.base || options.head || options['merge-base'])) {
       throw new Error('--diff cannot be combined with Git ref flags');
@@ -136,7 +146,7 @@ async function main() {
     config = loadConfig({
       repoRoot,
       configPath: options.config,
-      overrides: { severityGate: options.gate, model: options.model },
+      overrides: { severityGate: options.gate, model: options.model, concurrency: options.concurrency },
     });
   } catch (err) {
     if (!(err instanceof ConfigError)) throw err;

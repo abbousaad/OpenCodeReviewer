@@ -55,34 +55,45 @@ Keep findings and the summary concise so the entire JSON object fits in the resp
 }
 
 /**
- * Drive a sequence of review units, invoking onProgress after each.
- * Units each expose { label } and a `run()` that returns { findings, summary }.
+ * Run review units with at most `concurrency` in flight, invoking onProgress as
+ * each starts and finishes. Units each expose { label } and a `run()` that
+ * returns { findings, summary }. Results keep the order of `units`; `completed`
+ * counts finished units, since they can finish out of order.
  */
-export async function runUnits(units, { onProgress } = {}) {
-  const results = [];
-  for (let i = 0; i < units.length; i++) {
-    const unit = units[i];
-    onProgress?.({ phase: 'start', index: i, total: units.length, label: unit.label });
-    let result;
-    try {
-      result = await unit.run();
-    } catch (err) {
-      result = {
+export async function runUnits(units, { onProgress, concurrency = 1 } = {}) {
+  const results = new Array(units.length);
+  let next = 0;
+  let completed = 0;
+
+  const worker = async () => {
+    while (next < units.length) {
+      const i = next++;
+      const unit = units[i];
+      onProgress?.({ phase: 'start', index: i, total: units.length, label: unit.label });
+      let result;
+      try {
+        result = await unit.run();
+      } catch (err) {
+        result = {
+          label: unit.label,
+          findings: [],
+          summary: '',
+          error: err?.message || String(err),
+        };
+      }
+      results[i] = result;
+      completed++;
+      onProgress?.({
+        phase: 'done',
+        index: i,
+        completed,
+        total: units.length,
         label: unit.label,
-        findings: [],
-        summary: '',
-        error: err?.message || String(err),
-      };
+        findingCount: result.findings?.length ?? 0,
+        error: result.error,
+      });
     }
-    results.push(result);
-    onProgress?.({
-      phase: 'done',
-      index: i,
-      total: units.length,
-      label: unit.label,
-      findingCount: result.findings?.length ?? 0,
-      error: result.error,
-    });
-  }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, units.length) }, worker));
   return results;
 }

@@ -16,6 +16,7 @@ const DEFAULTS = {
   contextFile: 'REVIEW_CONTEXT.md',
   contextFileAliases: ['REVIEW_CONTEXT.md', 'ARCHITECTURE.md', 'docs/ARCHITECTURE.md'],
   contextFileRequired: false,
+  concurrency: 3,
   batch: { maxFiles: 6, maxBytes: 48000 },
   diff: { maxHunkBytesPerCall: 48000 },
   include: ['**/*.{js,jsx,ts,tsx,mjs,cjs,py,go,rb,rs,java,kt,php,c,cc,cpp,h,hpp,cs,swift,scala,sh,sql,vue,svelte}'],
@@ -23,19 +24,23 @@ const DEFAULTS = {
 };
 
 // The reviewed code can change these keys in its own review.config.json. The
-// model, gate and contextFileRequired decide whether a review passes, so only
-// the operator sets them: bundled file, --config, environment or flags.
+// model, gate and contextFileRequired decide whether a review passes, and
+// concurrency sets the request rate, so only the operator sets them: bundled
+// file, --config, environment or flags.
 const REPO_KEYS = ['contextFile', 'contextFileAliases', 'batch', 'diff', 'include', 'exclude'];
 
 const isText = (v) => typeof v === 'string' && v.length > 0;
 const isTextList = (v) => Array.isArray(v) && v.every(isText);
 const isPositiveInt = (v) => Number.isInteger(v) && v > 0;
+export const MAX_CONCURRENCY = 16;
+export const isConcurrency = (v) => Number.isInteger(v) && v >= 1 && v <= MAX_CONCURRENCY;
 const RULES = {
   model: [(v) => typeof v === 'string' && MODEL_PATTERN.test(v), 'in provider/model format'],
   severityGate: [(v) => SEVERITY_ORDER.includes(v), `one of ${SEVERITY_ORDER.join(', ')}`],
   contextFile: [isText, 'a nonempty string'],
   contextFileAliases: [isTextList, 'a list of nonempty strings'],
   contextFileRequired: [(v) => typeof v === 'boolean', 'true or false'],
+  concurrency: [isConcurrency, `an integer from 1 to ${MAX_CONCURRENCY}`],
   include: [isTextList, 'a list of nonempty strings'],
   exclude: [isTextList, 'a list of nonempty strings'],
   'batch.maxFiles': [isPositiveInt, 'a positive integer'],
@@ -89,6 +94,9 @@ export function loadConfig({ repoRoot, configPath, overrides = {} } = {}) {
 
   if (!SEVERITY_ORDER.includes(cfg.severityGate)) {
     throw new ConfigError(`Invalid severity gate: ${cfg.severityGate}. Use ${SEVERITY_ORDER.join(', ')}.`);
+  }
+  if (!isConcurrency(cfg.concurrency)) {
+    throw new ConfigError(`Invalid concurrency: ${cfg.concurrency}. Use an integer from 1 to ${MAX_CONCURRENCY}.`);
   }
   if (!MODEL_PATTERN.test(cfg.model)) {
     throw new ConfigError(`Invalid model: ${cfg.model}. Use provider/model format.`);
