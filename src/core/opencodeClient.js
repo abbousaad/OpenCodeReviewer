@@ -5,12 +5,18 @@ import { ROOT } from './config.js';
 
 const execFileP = promisify(execFile);
 let runOptions;
+let extraEnv = () => ({});
+
+/** Add variables to every OpenCode run, such as provider keys saved in the dashboard. */
+export function setExtraEnv(getEnv) {
+  extraEnv = getEnv;
+}
 
 /**
  * Run one headless OpenCode request with the model selected for this review.
  */
 export async function runOpenCode(prompt, model) {
-  const env = { ...process.env };
+  const env = { ...process.env, ...extraEnv() };
   delete env.REVIEW_PASSWORD;
   if (!env.OPENCODE_CONFIG) {
     env.OPENCODE_CONFIG = path.join(ROOT, 'opencode.json');

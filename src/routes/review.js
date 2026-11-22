@@ -5,13 +5,14 @@ import { startReview, getJob, listJobs, publicView } from '../core/jobs.js';
 import { renderMarkdown } from '../core/report.js';
 import { ConfigError, loadConfig, MODEL_PATTERN, SEVERITY_ORDER } from '../core/config.js';
 import { resolveWithin } from '../core/match.js';
+import { readSettings } from '../core/settings.js';
 
 const router = express.Router();
 const reviewRoot = path.resolve(process.env.REPO_DIR || process.cwd());
 
 /** Current effective config (for the dashboard form defaults). */
 router.get('/config', (req, res) => {
-  const c = loadConfig();
+  const c = loadConfig({ settings: readSettings() });
   res.json({
     repoRoot: reviewRoot,
     model: c.model,

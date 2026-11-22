@@ -42,6 +42,7 @@ for (const expected of (process.env.MOCK_CONTEXT || '').split(',').filter(Boolea
   if (!prompt.includes(expected)) process.exit(2);
 }
 const reply = process.env.MOCK_REPLY;
+if (process.env.MOCK_EXPECT_KEY !== undefined && process.env.DEEPSEEK_API_KEY !== process.env.MOCK_EXPECT_KEY) process.exit(2);
 trace('start');
 if (process.env.MOCK_DELAY_MS) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.MOCK_DELAY_MS));
@@ -72,7 +73,7 @@ if (reply === 'malformed' || (reply === 'retry-major' && !prompt.includes('OUTPU
 }
 `, { mode: 0o755 });
   const env = { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, DATA_DIR: path.join(root, 'data') };
-  delete env.REVIEW_PASSWORD;
+  for (const name of ['REVIEW_PASSWORD', 'DEEPSEEK_API_KEY', 'OC_MODEL', 'SEVERITY_GATE']) delete env[name];
   return { root, repo, env };
 }
 
@@ -426,7 +427,7 @@ test('config layers apply in order and the reviewed repo cannot set the gate or 
   for (const [content, message] of [
     ['{bad', /is not valid JSON/],
     ['[]', /must contain a JSON object/],
-    ['{"exlude": []}', /unknown key exlude/],
+    ['{"exlude": []}', /exlude is not a known key/],
     ['{"batch": {"maxFiles": 0}}', /batch\.maxFiles must be a positive integer/],
     ['{"include": "**/*.js"}', /include must be a list of nonempty strings/],
     ['{"severityGate": "typo"}', /severityGate must be one of/],
@@ -710,4 +711,128 @@ test('REVIEW_PASSWORD replaces the default login and cannot be changed in the da
   });
   assert.equal(change.status, 409);
   assert.throws(() => readFileSync(path.join(env.DATA_DIR, 'auth.json')), { code: 'ENOENT' });
+});
+
+test('dashboard settings are validated, saved, applied to runs and never echo secrets', { timeout: 20000 }, async (t) => {
+  const { repo, env } = fixture(t);
+  writeFileSync(path.join(repo, 'source.js'), 'export const reviewed = true;\n');
+  writeFileSync(path.join(repo, 'BUSINESS_LOGIC.md'), 'OWNER_ACCESS_RULE');
+  const secret = 'sk-test-secret-value';
+  const dashboardEnv = {
+    ...env, REPO_DIR: repo, REVIEW_PASSWORD: 'test-password', MOCK_REPLY: 'minor', MOCK_STANDALONE: '1', MOCK_EXPECT_KEY: secret,
+  };
+  let { base, server } = await startDashboard(t, dashboardEnv);
+  const headers = {
+    authorization: 'Basic ' + Buffer.from('ocr-admin:test-password').toString('base64'),
+    'content-type': 'application/json',
+  };
+  const bodies = [];
+  const call = async (method, url, body) => {
+    const res = await fetch(base + url, { method, headers, body: body && JSON.stringify(body) });
+    const text = await res.text();
+    bodies.push(text);
+    return { status: res.status, data: text.startsWith('{') || text.startsWith('[') ? JSON.parse(text) : text };
+  };
+
+  const initial = await call('GET', '/api/settings');
+  assert.equal(initial.status, 200);
+  assert.equal(initial.data.settings.model, 'deepseek/deepseek-flash');
+  assert.equal(initial.data.settings.concurrency, 3);
+  assert.deepEqual(initial.data.locked, {});
+  assert.deepEqual(initial.data.secrets.deepseekApiKey, { label: 'DeepSeek API key', set: false, fromEnv: false });
+  assert.ok(initial.data.models.some((m) => m.id === 'deepseek/deepseek-v4-pro'));
+
+  const invalid = await call('PUT', '/api/settings', {
+    settings: { concurrency: 40, batch: { maxFiles: 0 }, include: 'src/**', bogus: 1, model: 'no-slash' },
+    secrets: { deepseekApiKey: 'has spaces', other: 'x' },
+  });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(Object.keys(invalid.data.fields).sort(), [
+    'batch.maxFiles', 'bogus', 'concurrency', 'include', 'model', 'secrets.deepseekApiKey', 'secrets.other',
+  ]);
+  assert.throws(() => readFileSync(path.join(env.DATA_DIR, 'settings.json')), { code: 'ENOENT' });
+
+  const saved = await call('PUT', '/api/settings', {
+    settings: { model: 'test/saved', concurrency: 2, batch: { maxFiles: 1 }, exclude: ['**/skip/**'] },
+    secrets: { deepseekApiKey: secret, githubToken: 'ghp_example' },
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.settings.model, 'test/saved');
+  assert.deepEqual(saved.data.settings.batch, { maxFiles: 1, maxBytes: 48000 });
+  assert.equal(saved.data.secrets.deepseekApiKey.set, true);
+  assert.equal(saved.data.secrets.githubToken.set, true);
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(path.join(env.DATA_DIR, 'secrets.json')).mode & 0o777, 0o600);
+  }
+  assert.equal((await call('GET', '/api/config')).data.model, 'test/saved');
+
+  // A run uses the saved model and batch size, and OpenCode receives the saved key.
+  mkdirSync(path.join(repo, 'skip'));
+  writeFileSync(path.join(repo, 'skip', 'ignored.js'), 'export const ignored = true;\n');
+  writeFileSync(path.join(repo, 'second.js'), 'export const second = true;\n');
+  const started = await call('POST', '/api/review', { repoRoot: repo });
+  assert.equal(started.status, 202);
+  const stream = await fetch(`${base}/api/review/${started.data.id}/stream`, { headers });
+  const events = (await stream.text()).trim().split('\n\n').map((m) => JSON.parse(m.slice('data: '.length)));
+  const done = events.at(-1);
+  assert.equal(done.type, 'complete');
+  assert.deepEqual(done.report.errors, []);
+  assert.equal(done.report.model, 'test/saved');
+  assert.deepEqual(done.report.meta.reviewedFiles.sort(), ['second.js', 'source.js']);
+  assert.equal(events.filter((e) => e.type === 'batch-done').length, 2);
+
+  // Settings survive a restart; null resets a key and clears a secret.
+  server.kill();
+  await once(server, 'exit');
+  ({ base, server } = await startDashboard(t, dashboardEnv));
+  assert.equal((await call('GET', '/api/settings')).data.settings.model, 'test/saved');
+  const reset = await call('PUT', '/api/settings', { settings: { model: null }, secrets: { githubToken: null } });
+  assert.equal(reset.data.settings.model, 'deepseek/deepseek-flash');
+  assert.equal(reset.data.secrets.githubToken.set, false);
+  assert.equal(reset.data.secrets.deepseekApiKey.set, true);
+
+  for (const body of bodies) {
+    assert.ok(!body.includes(secret) && !body.includes('ghp_example'), 'a response contained a secret');
+  }
+});
+
+test('environment variables lock the matching settings', { timeout: 10000 }, async (t) => {
+  const { repo, env } = fixture(t);
+  const { base } = await startDashboard(t, {
+    ...env, REPO_DIR: repo, REVIEW_PASSWORD: 'test-password', OC_MODEL: 'env/model', DEEPSEEK_API_KEY: 'from-env',
+  });
+  const headers = {
+    authorization: 'Basic ' + Buffer.from('ocr-admin:test-password').toString('base64'),
+    'content-type': 'application/json',
+  };
+  const view = await (await fetch(base + '/api/settings', { headers })).json();
+  assert.deepEqual(view.locked, { model: 'OC_MODEL' });
+  assert.equal(view.settings.model, 'env/model');
+  assert.deepEqual(view.secrets.deepseekApiKey, { label: 'DeepSeek API key', set: true, fromEnv: true });
+  const res = await fetch(base + '/api/settings', {
+    method: 'PUT', headers, body: JSON.stringify({ settings: { model: 'test/other' }, secrets: { deepseekApiKey: 'x' } }),
+  });
+  assert.equal(res.status, 400);
+  const { fields } = await res.json();
+  assert.deepEqual(fields, { model: 'is set by OC_MODEL', 'secrets.deepseekApiKey': 'is set by DEEPSEEK_API_KEY' });
+});
+
+test('saved settings sit between the bundled file and the reviewed repo file', (t) => {
+  const { repo } = fixture(t);
+  const saved = { OC_MODEL: process.env.OC_MODEL, SEVERITY_GATE: process.env.SEVERITY_GATE };
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  delete process.env.OC_MODEL;
+  delete process.env.SEVERITY_GATE;
+  writeFileSync(path.join(repo, 'review.config.json'), JSON.stringify({ exclude: ['from-repo'] }));
+  const cfg = loadConfig({ repoRoot: repo, settings: { exclude: ['from-settings'], severityGate: 'minor' } });
+  assert.deepEqual(cfg.exclude, ['from-repo']);
+  assert.equal(cfg.severityGate, 'minor');
+  assert.ok(cfg.sources.includes('saved settings'));
+  assert.equal(loadConfig({ overrides: { severityGate: 'info' }, settings: { severityGate: 'minor' } }).severityGate, 'info');
+  assert.throws(() => loadConfig({ settings: { concurrency: 0 } }), /Saved settings: concurrency must be an integer/);
 });
