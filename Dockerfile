@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 
 # System deps: git for diffing, ca-certificates for HTTPS to the model provider
 RUN apt-get update \
