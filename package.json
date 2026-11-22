@@ -4,7 +4,7 @@
   "description": "OpenCodeReviewer reviews Git ranges or unified diffs in any CI system and offers a standalone web dashboard.",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "bin": {
     "opencodereviewer": "src/cli.js"
