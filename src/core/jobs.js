@@ -35,7 +35,7 @@ function publicView(job) {
 /** Create and start a standalone review job for `repoRoot`. */
 export function startReview({ repoRoot, overrides = {} }) {
   const id = randomUUID();
-  const config = { ...loadConfig(), ...overrides };
+  const config = loadConfig({ repoRoot, overrides });
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);
 
@@ -76,6 +76,7 @@ async function run(job) {
   const { files, batches, truncated } = await buildBatches(job.repoRoot, job.config);
   job.progress.total = batches.length;
   emit(job, { type: 'plan', files: files.length, batches: batches.length });
+  for (const message of job.config.warnings) emit(job, { type: 'warning', message });
   if (truncated.length) emit(job, { type: 'warning', message: truncationWarning(truncated) });
 
   const context = readContextFile(job.repoRoot, job.config);
