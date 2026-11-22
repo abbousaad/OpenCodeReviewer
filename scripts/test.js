@@ -240,6 +240,17 @@ test('dashboard protects review jobs and uses the model selected for each job', 
   assert.equal((await post(outside)).status, 403);
   assert.equal((await post(path.join(repo, 'escape'))).status, 403);
   assert.equal((await post(repo, undefined, 'typo')).status, 400);
+  const sendBody = (body) => fetch(endpoint, {
+    method: 'POST',
+    headers: { ...headers, 'content-type': 'application/json' },
+    body,
+  });
+  const malformed = await sendBody('{bad');
+  assert.equal(malformed.status, 400);
+  assert.deepEqual(await malformed.json(), { error: 'Send a valid JSON body.' });
+  const oversized = await sendBody(JSON.stringify({ repoRoot: 'x'.repeat(3 * 1024 * 1024) }));
+  assert.equal(oversized.status, 413);
+  assert.deepEqual(await oversized.json(), { error: 'The request body is too large.' });
   for (const model of ['test/first', 'test/second']) {
     const response = await post(repo, model);
     assert.equal(response.status, 202);

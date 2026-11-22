@@ -34,6 +34,20 @@ app.use(express.json({ limit: '2mb' }));
 app.use('/api', reviewRouter);
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Answer request errors with JSON instead of Express's HTML page, which shows
+// stack traces unless NODE_ENV=production.
+const bodyErrors = {
+  'entity.parse.failed': 'Send a valid JSON body.',
+  'entity.too.large': 'The request body is too large.',
+};
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status >= 400 && err.status < 500 ? err.status : 500;
+  if (status === 500) console.error('[OpenCodeReviewer] request failed:', err);
+  const fallback = status === 500 ? 'Internal server error.' : 'Bad request.';
+  res.status(status).json({ error: bodyErrors[err.type] || fallback });
+});
+
 const server = app.listen(port, host, () => {
   const address = host === '::1' ? '[::1]' : host;
   console.log(`[OpenCodeReviewer] dashboard listening on http://${address}:${server.address().port}`);
