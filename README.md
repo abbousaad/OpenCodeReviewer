@@ -76,15 +76,39 @@ docker build -t opencodereviewer .
 ## Standalone mode (dashboard)
 
 ```bash
-export REVIEW_PASSWORD="$(openssl rand -hex 16)"
 docker run --rm -p 127.0.0.1:3000:3000 \
   -e DEEPSEEK_API_KEY="$DEEPSEEK_API_KEY" \
-  -e REVIEW_PASSWORD \
+  -v ocr-data:/data \
   -v "$PWD":/repo:ro \
   opencodereviewer
 ```
 
-Open http://127.0.0.1:3000 and sign in as `review` using `REVIEW_PASSWORD`.
+Open http://127.0.0.1:3000 and sign in as `ocr-admin` with the password
+`ocr-admin`. The dashboard then asks for a new password of at least 12
+characters and allows nothing else until it is set. Until you change it,
+anyone who can reach the port can sign in with the default, so keep the port
+on `127.0.0.1` until then. The server prints a reminder at startup while the
+default password is active.
+
+- **Data:** the password hash is stored in `/data/auth.json` (mode `0600`).
+  Keep the `ocr-data` volume to keep the password across restarts. Set
+  `DATA_DIR` to use another directory; outside Docker it defaults to `data/`
+  in the checkout.
+- **Automated setups:** set `REVIEW_PASSWORD` to use that password instead.
+  The forced change is skipped, and the password can only be changed in the
+  environment.
+- **Sessions:** signing in sets an `HttpOnly`, `SameSite=Strict` cookie that
+  expires after 12 hours without use. Sessions end when the server restarts.
+  After five failed attempts, an IP address is locked out for 15 minutes.
+- **API clients:** send Basic auth as `ocr-admin` with the password.
+  State-changing requests must use `Content-Type: application/json`.
+- **Host names:** the dashboard answers only to IP addresses and `localhost`,
+  which blocks DNS rebinding attacks. To use a host name, for example behind a
+  reverse proxy, list it in `ALLOWED_HOSTS` (comma-separated).
+
+> **Upgrading:** the password-free loopback mode is gone, and the Basic-auth
+> username changed from `review` to `ocr-admin`.
+
 The dashboard defaults to `/repo` in Docker and accepts directories within that
 mount. It streams batch progress and lets you download the report. Start with a
 small repo. Files and diffs over the configured size limits are split into
@@ -266,8 +290,9 @@ DEEPSEEK_API_KEY=... opencodereviewer ci .
 ```
 
 The local dashboard listens on http://127.0.0.1:3000. It defaults to the
-working directory when `REPO_DIR` is unset. A non-loopback `HOST` requires
-`REVIEW_PASSWORD`.
+working directory when `REPO_DIR` is unset. Sign in as described in
+[Standalone mode](#standalone-mode-dashboard). The password hash is saved in
+`data/` unless `DATA_DIR` is set.
 
 ## License
 

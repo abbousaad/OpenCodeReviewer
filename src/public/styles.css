@@ -101,3 +101,6 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .finding .msg { margin: 6px 0; }
 .finding .sug { font-size: 13px; color: var(--muted); }
 code { background: #0f141b; padding: 1px 5px; border-radius: 4px; }
+header:has(#logout) { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+main.narrow { max-width: 420px; }
