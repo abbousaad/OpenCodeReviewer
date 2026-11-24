@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Settings — OpenCodeReviewer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>🔍 OpenCodeReviewer</h1>
+        <p class="subtitle">OpenCode-powered code review · standalone batch mode</p>
+      </div>
+      <nav>
+        <a href="/">Dashboard</a>
+        <a href="/settings.html" aria-current="page">Settings</a>
+        <button type="button" id="logout" class="secondary">Sign out</button>
+      </nav>
+    </header>
+
+    <main>
+      <form id="settings-form" novalidate>
+        <section class="panel">
+          <h2>Model and gate</h2>
+          <div class="row">
+            <label data-key="model">
+              Model
+              <select id="model-select"></select>
+              <input id="model-custom" class="hidden" placeholder="provider/model" aria-label="Custom model" />
+            </label>
+            <label data-key="severityGate">
+              Severity gate <span class="hint">(fail at this level or above)</span>
+              <select id="severityGate">
+                <option value="info">info</option>
+                <option value="minor">minor</option>
+                <option value="major">major</option>
+                <option value="critical">critical</option>
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Model provider keys</h2>
+          <p class="hint">Saved keys are never shown again. Leave a field empty to keep the saved value.</p>
+          <div id="secrets"></div>
+        </section>
+
+        <section class="panel">
+          <h2>Review scope and batches</h2>
+          <div class="row">
+            <label data-key="include">
+              Include <span class="hint">(one glob per line)</span>
+              <textarea id="include" rows="4" spellcheck="false"></textarea>
+            </label>
+            <label data-key="exclude">
+              Exclude <span class="hint">(one glob per line)</span>
+              <textarea id="exclude" rows="4" spellcheck="false"></textarea>
+            </label>
+          </div>
+          <div class="row">
+            <label data-key="batch.maxFiles">
+              Files per batch
+              <input id="batch.maxFiles" type="number" min="1" step="1" />
+            </label>
+            <label data-key="batch.maxBytes">
+              Bytes per batch
+              <input id="batch.maxBytes" type="number" min="1" step="1" />
+            </label>
+          </div>
+          <div class="row">
+            <label data-key="diff.maxHunkBytesPerCall">
+              Diff bytes per batch <span class="hint">(CI mode)</span>
+              <input id="diff.maxHunkBytesPerCall" type="number" min="1" step="1" />
+            </label>
+            <label data-key="concurrency">
+              Batches at the same time <span class="hint">(1–16)</span>
+              <input id="concurrency" type="number" min="1" max="16" step="1" />
+            </label>
+          </div>
+          <label data-key="contextFileRequired" class="checkbox">
+            <input id="contextFileRequired" type="checkbox" />
+            Fail when no project context file is found
+          </label>
+          <p class="hint">Empty fields go back to their defaults. A reviewed repository's own
+            <code>review.config.json</code> can still change the scope and batch sizes for that repository.</p>
+        </section>
+
+        <div class="actions">
+          <button type="submit" id="save">Save settings</button>
+          <span id="saved" class="hint hidden" role="status">Saved.</span>
+        </div>
+        <div id="banner" class="banner hidden" role="alert"></div>
+      </form>
+    </main>
+
+    <script src="common.js"></script>
+    <script src="settings.js"></script>
+  </body>
+</html>

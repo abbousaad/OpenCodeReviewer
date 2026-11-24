@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { loadConfig } from './config.js';
+import { readSettings } from './settings.js';
 import { buildBatches } from './batcher.js';
 import { readContextFile } from './contextFile.js';
 import { reviewBatch, runUnits } from './reviewer.js';
@@ -35,7 +36,7 @@ function publicView(job) {
 /** Create and start a standalone review job for `repoRoot`. */
 export function startReview({ repoRoot, overrides = {} }) {
   const id = randomUUID();
-  const config = loadConfig({ repoRoot, overrides });
+  const config = loadConfig({ repoRoot, settings: readSettings(), overrides });
   const emitter = new EventEmitter();
   emitter.setMaxListeners(0);
 

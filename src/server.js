@@ -2,9 +2,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { initAuth } from './core/auth.js';
+import { setExtraEnv } from './core/opencodeClient.js';
+import { providerEnv } from './core/settings.js';
 import { DATA_DIR, ensureDataDir } from './core/store.js';
 import authRouter, { csrfGuard, hostGuard, requireAuth } from './routes/auth.js';
 import reviewRouter from './routes/review.js';
+import settingsRouter from './routes/settings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -13,6 +16,7 @@ const port = Number(process.env.PORT || 3000);
 
 ensureDataDir();
 const auth = initAuth();
+setExtraEnv(providerEnv);
 
 app.disable('x-powered-by');
 app.use((req, res, next) => {
@@ -29,6 +33,7 @@ app.use(express.json({ limit: '2mb' }));
 app.use('/api', csrfGuard);
 app.use(requireAuth);
 app.use('/api/auth', authRouter);
+app.use('/api', settingsRouter);
 app.use('/api', reviewRouter);
 app.use(express.static(path.join(__dirname, 'public')));
 

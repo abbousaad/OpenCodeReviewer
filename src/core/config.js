@@ -28,6 +28,8 @@ const DEFAULTS = {
 // concurrency sets the request rate, so only the operator sets them: bundled
 // file, --config, environment or flags.
 const REPO_KEYS = ['contextFile', 'contextFileAliases', 'batch', 'diff', 'include', 'exclude'];
+// Keys the dashboard settings page saves.
+export const SETTINGS_KEYS = ['model', 'severityGate', 'concurrency', 'contextFileRequired', 'batch', 'diff', 'include', 'exclude'];
 
 const isText = (v) => typeof v === 'string' && v.length > 0;
 const isTextList = (v) => Array.isArray(v) && v.every(isText);
@@ -53,11 +55,12 @@ export class ConfigError extends Error {}
 
 /**
  * Build the effective config. Later layers win: built-in defaults, the bundled
- * review.config.json, the reviewed repo's review.config.json (REPO_KEYS only),
- * the `configPath` file, environment variables, then `overrides`.
+ * review.config.json, the dashboard's saved `settings`, the reviewed repo's
+ * review.config.json (REPO_KEYS only), the `configPath` file, environment
+ * variables, then `overrides`.
  * The result lists the files read in `sources` and ignored repo keys in `warnings`.
  */
-export function loadConfig({ repoRoot, configPath, overrides = {} } = {}) {
+export function loadConfig({ repoRoot, configPath, settings, overrides = {} } = {}) {
   const sources = [];
   const warnings = [];
   let cfg = merge(DEFAULTS, {});
@@ -67,6 +70,12 @@ export function loadConfig({ repoRoot, configPath, overrides = {} } = {}) {
   if (bundled) {
     cfg = merge(cfg, bundled);
     sources.push(bundledPath);
+  }
+
+  if (settings && Object.keys(settings).length) {
+    validateLayer(settings, 'Saved settings');
+    cfg = merge(cfg, settings);
+    sources.push('saved settings');
   }
 
   const repoPath = repoRoot && findRepoConfig(repoRoot);
@@ -143,21 +152,32 @@ function readConfigFile(file, { optional = false } = {}) {
 
 function validateLayer(layer, file) {
   if (!isPlainObject(layer)) throw new ConfigError(`${file} must contain a JSON object.`);
+  const [first] = configErrors(layer);
+  if (first) throw new ConfigError(`${file}: ${first.key} ${first.message}.`);
+}
+
+/** Every problem in a config object, as [{ key, message }] with dotted keys. */
+export function configErrors(layer) {
+  const errors = [];
   const entries = [];
   for (const [key, value] of Object.entries(layer)) {
     if (key === 'batch' || key === 'diff') {
-      if (!isPlainObject(value)) throw new ConfigError(`${file}: ${key} must be an object.`);
-      for (const [sub, subValue] of Object.entries(value)) entries.push([`${key}.${sub}`, subValue]);
+      if (!isPlainObject(value)) errors.push({ key, message: 'must be an object' });
+      else for (const [sub, subValue] of Object.entries(value)) entries.push([`${key}.${sub}`, subValue]);
     } else {
       entries.push([key, value]);
     }
   }
   for (const [key, value] of entries) {
     const rule = RULES[key];
-    if (!rule) throw new ConfigError(`${file}: unknown key ${key}.`);
+    if (!rule) {
+      errors.push({ key, message: 'is not a known key' });
+      continue;
+    }
     const [isValid, expected] = rule;
-    if (!isValid(value)) throw new ConfigError(`${file}: ${key} must be ${expected}.`);
+    if (!isValid(value)) errors.push({ key, message: `must be ${expected}` });
   }
+  return errors;
 }
 
 function isPlainObject(value) {

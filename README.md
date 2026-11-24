@@ -106,6 +106,25 @@ default password is active.
   which blocks DNS rebinding attacks. To use a host name, for example behind a
   reverse proxy, list it in `ALLOWED_HOSTS` (comma-separated).
 
+### Settings
+
+Open **Settings** to change the model, severity gate, include and exclude
+globs, batch sizes, concurrency and `contextFileRequired` for dashboard
+reviews. They are saved in `/data/settings.json` and apply to every new run.
+A reviewed directory's own `review.config.json` can still change the scope and
+batch sizes for that directory, and the dashboard form's model and gate apply
+to a single run.
+
+The page also stores the DeepSeek API key and a GitHub token (used for cloning
+private repositories in a later release) in `/data/secrets.json` (mode `0600`).
+Saved secrets are never sent back to the browser; the page shows only whether
+each one is set. The key is passed to OpenCode when `DEEPSEEK_API_KEY` is not
+set in the environment.
+
+Environment variables take precedence: when `OC_MODEL`, `SEVERITY_GATE` or
+`DEEPSEEK_API_KEY` is set, the matching field is read-only. With a key saved in
+Settings, the `-e DEEPSEEK_API_KEY` option above can be left out.
+
 > **Upgrading:** the password-free loopback mode is gone, and the Basic-auth
 > username changed from `review` to `ocr-admin`.
 
@@ -259,6 +278,9 @@ Settings are applied in this order, and later sources win:
    review must not choose its own model, gate, context requirement or request
    rate.
 4. The file passed with `--config`. It can set every key.
+
+Dashboard reviews also apply the settings saved on the Settings page, between
+steps 2 and 3. The CLI does not read them.
 5. The `OC_MODEL` and `SEVERITY_GATE` environment variables.
 6. The `--gate`, `--model` and `--concurrency` flags, or the dashboard form.
 
