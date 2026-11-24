@@ -17,6 +17,9 @@ const DEFAULTS = {
   contextFileAliases: ['REVIEW_CONTEXT.md', 'ARCHITECTURE.md', 'docs/ARCHITECTURE.md'],
   contextFileRequired: false,
   concurrency: 3,
+  maxParallelReviews: 1,
+  runsToKeep: 50,
+  timeoutSeconds: 300,
   batch: { maxFiles: 6, maxBytes: 48000 },
   diff: { maxHunkBytesPerCall: 48000 },
   include: ['**/*.{js,jsx,ts,tsx,mjs,cjs,py,go,rb,rs,java,kt,php,c,cc,cpp,h,hpp,cs,swift,scala,sh,sql,vue,svelte}'],
@@ -29,13 +32,20 @@ const DEFAULTS = {
 // file, --config, environment or flags.
 const REPO_KEYS = ['contextFile', 'contextFileAliases', 'batch', 'diff', 'include', 'exclude'];
 // Keys the dashboard settings page saves.
-export const SETTINGS_KEYS = ['model', 'severityGate', 'concurrency', 'contextFileRequired', 'batch', 'diff', 'include', 'exclude'];
+export const SETTINGS_KEYS = [
+  'model', 'severityGate', 'concurrency', 'maxParallelReviews', 'runsToKeep', 'timeoutSeconds',
+  'contextFileRequired', 'batch', 'diff', 'include', 'exclude',
+];
 
 const isText = (v) => typeof v === 'string' && v.length > 0;
 const isTextList = (v) => Array.isArray(v) && v.every(isText);
 const isPositiveInt = (v) => Number.isInteger(v) && v > 0;
 export const MAX_CONCURRENCY = 16;
 export const isConcurrency = (v) => Number.isInteger(v) && v >= 1 && v <= MAX_CONCURRENCY;
+export const MAX_PARALLEL_REVIEWS = 8;
+export const MAX_RUNS_TO_KEEP = 500;
+export const TIMEOUT_RANGE = [30, 3600];
+const inRange = (min, max) => (v) => Number.isInteger(v) && v >= min && v <= max;
 const RULES = {
   model: [(v) => typeof v === 'string' && MODEL_PATTERN.test(v), 'in provider/model format'],
   severityGate: [(v) => SEVERITY_ORDER.includes(v), `one of ${SEVERITY_ORDER.join(', ')}`],
@@ -43,6 +53,9 @@ const RULES = {
   contextFileAliases: [isTextList, 'a list of nonempty strings'],
   contextFileRequired: [(v) => typeof v === 'boolean', 'true or false'],
   concurrency: [isConcurrency, `an integer from 1 to ${MAX_CONCURRENCY}`],
+  maxParallelReviews: [inRange(1, MAX_PARALLEL_REVIEWS), `an integer from 1 to ${MAX_PARALLEL_REVIEWS}`],
+  runsToKeep: [inRange(1, MAX_RUNS_TO_KEEP), `an integer from 1 to ${MAX_RUNS_TO_KEEP}`],
+  timeoutSeconds: [inRange(...TIMEOUT_RANGE), `an integer from ${TIMEOUT_RANGE[0]} to ${TIMEOUT_RANGE[1]}`],
   include: [isTextList, 'a list of nonempty strings'],
   exclude: [isTextList, 'a list of nonempty strings'],
   'batch.maxFiles': [isPositiveInt, 'a positive integer'],
@@ -97,6 +110,8 @@ export function loadConfig({ repoRoot, configPath, settings, overrides = {} } = 
 
   if (process.env.OC_MODEL) cfg.model = process.env.OC_MODEL;
   if (process.env.SEVERITY_GATE !== undefined) cfg.severityGate = process.env.SEVERITY_GATE;
+  if (process.env.MAX_PARALLEL_REVIEWS !== undefined) cfg.maxParallelReviews = Number(process.env.MAX_PARALLEL_REVIEWS);
+  if (process.env.OC_TIMEOUT_MS !== undefined) cfg.timeoutSeconds = Math.round(Number(process.env.OC_TIMEOUT_MS) / 1000);
   for (const [key, value] of Object.entries(overrides)) {
     if (value !== undefined) cfg[key] = value;
   }
@@ -106,6 +121,14 @@ export function loadConfig({ repoRoot, configPath, settings, overrides = {} } = 
   }
   if (!isConcurrency(cfg.concurrency)) {
     throw new ConfigError(`Invalid concurrency: ${cfg.concurrency}. Use an integer from 1 to ${MAX_CONCURRENCY}.`);
+  }
+  const [isParallel, parallelRange] = RULES.maxParallelReviews;
+  if (!isParallel(cfg.maxParallelReviews)) {
+    throw new ConfigError(`Invalid maxParallelReviews: ${cfg.maxParallelReviews}. Use ${parallelRange}.`);
+  }
+  const [isTimeout, timeoutRange] = RULES.timeoutSeconds;
+  if (!isTimeout(cfg.timeoutSeconds)) {
+    throw new ConfigError(`Invalid timeoutSeconds: ${cfg.timeoutSeconds}. Use ${timeoutRange} (OC_TIMEOUT_MS is in milliseconds).`);
   }
   if (!MODEL_PATTERN.test(cfg.model)) {
     throw new ConfigError(`Invalid model: ${cfg.model}. Use provider/model format.`);

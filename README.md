@@ -106,6 +106,52 @@ default password is active.
   which blocks DNS rebinding attacks. To use a host name, for example behind a
   reverse proxy, list it in `ALLOWED_HOSTS` (comma-separated).
 
+### Runs, queue and costs
+
+The dashboard lists every run with its status, findings, cost and duration.
+Open a run for its results page: the gate result, cost and token use, findings
+grouped by file with severity and text filters, failed batches, batch
+summaries and the activity log. Reports download as Markdown or JSON.
+
+- **Repositories:** reviews run on saved repositories. See below.
+- **Queue:** at most `maxParallelReviews` runs execute at once (default 1);
+  others wait in order. Set it in **Settings** or lock it with
+  `MAX_PARALLEL_REVIEWS`. Up to `maxParallelReviews × concurrency` model calls
+  can be in flight.
+- **Timeouts:** each model call stops after `timeoutSeconds` (default 300).
+  A batch whose call times out or crashes is retried once before it counts as
+  failed. Set it in **Settings** or lock it with `OC_TIMEOUT_MS` (milliseconds).
+- **Cancel:** a queued run is dropped at once. A running run starts no new
+  batches, stops the model calls in flight and keeps the findings so far.
+- **History:** runs are saved in `/data/runs/` (mode `0600`) and survive
+  restarts. The newest `runsToKeep` runs are kept (default 50). Runs that were
+  active when the server stopped are marked *interrupted*.
+- **Spend:** the dashboard shows the estimated USD cost and tokens for all time
+  and this month. Totals live in `/data/usage.json` and still count runs that
+  were deleted or pruned.
+
+### Repositories
+
+Open **Repositories** to manage what the dashboard can review.
+
+- **Local folder:** a folder inside the review root (`REPO_DIR`). Removing it
+  only removes it from the list; the files are never deleted.
+- **Upload:** a folder (packed into a ZIP in the browser) or a `.zip`. The
+  server extracts it into `/data/repos/<id>/` with owner-only permissions and
+  unwraps a single top-level folder. Paths that escape the folder, absolute
+  paths, symlinks, encrypted entries and size fields that don't match the data
+  are rejected; `.git`, `node_modules` and `__MACOSX` are skipped. Limits:
+  `MAX_UPLOAD_MB` (200), `MAX_UPLOAD_FILES` (20000) and `MAX_UPLOAD_FILE_MB`
+  (2 per file; larger files are skipped).
+- **Git URL:** a shallow clone over `https://` into `/data/repos/<id>/`, with
+  hooks, submodules, symlinks and redirects off. Only hosts in
+  `GIT_ALLOWED_HOSTS` are allowed (default `github.com,gitlab.com,bitbucket.org`).
+  Private github.com repositories use the GitHub token saved in Settings; it is
+  passed to Git in the environment and is never put in the URL or saved with
+  the repository. **Pull** re-clones and swaps the copy in.
+- A repository can't be removed or pulled while a review of it is queued or
+  running. Removing an upload or clone deletes its copy; its past runs stay.
+
 ### Settings
 
 Open **Settings** to change the model, severity gate, include and exclude

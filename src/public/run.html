@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Run — OpenCodeReviewer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>OpenCodeReviewer</h1>
+        <p class="subtitle">AI code review</p>
+      </div>
+      <nav>
+        <a href="/">Dashboard</a>
+        <a href="/repos.html">Repositories</a>
+        <a href="/settings.html">Settings</a>
+        <button type="button" id="logout" class="secondary">Sign out</button>
+      </nav>
+    </header>
+
+    <main class="wide">
+      <a href="/" class="back">← All runs</a>
+
+      <section class="run-head">
+        <div>
+          <div class="title-row">
+            <h2 id="repo-name">Loading…</h2>
+            <span id="status-badge"></span>
+          </div>
+          <p class="meta" id="meta"></p>
+        </div>
+        <div class="run-actions">
+          <button type="button" id="cancel" class="secondary hidden">Cancel run</button>
+          <a id="dl-md" class="btn-link hidden" href="#">report.md</a>
+          <a id="dl-json" class="btn-link hidden" href="#">report.json</a>
+          <button type="button" id="delete" class="secondary danger hidden">Delete</button>
+        </div>
+      </section>
+
+      <div id="banner" class="banner hidden" role="alert"></div>
+
+      <section class="panel hidden" id="progress-panel">
+        <div class="panel-head">
+          <h2>Progress</h2>
+          <span class="hint" id="progress-count"></span>
+        </div>
+        <div class="progress-bar"><div id="progress-fill"></div></div>
+        <p id="progress-text">Waiting…</p>
+      </section>
+
+      <section class="stats hidden" id="summary">
+        <div class="stat">
+          <span class="stat-label">Gate</span>
+          <span class="stat-value" id="s-gate">—</span>
+          <span class="stat-note" id="s-gate-note"></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Findings</span>
+          <span class="stat-value" id="s-findings">—</span>
+          <span class="stat-note" id="s-findings-note"></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Cost</span>
+          <span class="stat-value" id="s-cost">—</span>
+          <span class="stat-note" id="s-cost-note"></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Tokens</span>
+          <span class="stat-value" id="s-tokens">—</span>
+          <span class="stat-note" id="s-tokens-note"></span>
+        </div>
+      </section>
+
+      <section class="panel hidden" id="warnings-panel">
+        <h2>Warnings</h2>
+        <ul class="plain" id="warnings"></ul>
+      </section>
+
+      <section class="panel hidden" id="findings-panel">
+        <div class="panel-head">
+          <h2>Findings</h2>
+          <span class="hint" id="findings-shown"></span>
+        </div>
+        <div class="toolbar">
+          <div class="filters" id="filters" role="group" aria-label="Filter by severity"></div>
+          <input id="search" type="search" placeholder="Filter by file, category or text" aria-label="Filter findings" />
+        </div>
+        <div id="findings"></div>
+      </section>
+
+      <section class="panel hidden" id="errors-panel">
+        <h2>Failed batches</h2>
+        <ul class="plain" id="errors"></ul>
+      </section>
+
+      <section class="panel hidden" id="details-panel">
+        <details>
+          <summary>Batch summaries <span class="hint" id="summaries-count"></span></summary>
+          <div id="summaries"></div>
+        </details>
+        <details>
+          <summary>Activity log</summary>
+          <ul id="log"></ul>
+        </details>
+      </section>
+    </main>
+
+    <script src="common.js"></script>
+    <script src="run.js"></script>
+  </body>
+</html>

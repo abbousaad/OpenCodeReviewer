@@ -34,6 +34,9 @@ export function csrfGuard(req, res, next) {
     }
     if (originHost !== req.get('Host')) return res.status(403).json({ error: 'Cross-origin requests are not allowed.' });
   }
+  // Uploads send a ZIP body. Like JSON, that content type needs a CORS
+  // preflight, so a cross-site form still cannot send it.
+  if (req.method === 'POST' && req.path === '/repos/upload' && req.is('application/zip')) return next();
   if (!req.is('application/json')) {
     return res.status(415).json({ error: 'Send JSON with Content-Type: application/json.' });
   }

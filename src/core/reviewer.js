@@ -7,17 +7,17 @@ import { diffReviewPrompt, batchReviewPrompt, parseFindings } from './prompts.js
  */
 export async function reviewDiffUnit(unit, { config, contextText }) {
   const prompt = diffReviewPrompt({ diffText: unit.diffText, contextText });
-  return failClipped(await review(prompt, config.model, unit.label, unit.files), unit);
+  return failClipped(await review(prompt, config, unit.label, unit.files), unit);
 }
 
 /**
  * Review one batch of whole files (standalone mode).
  * @param {object} batch - { label, files: [{ path, content }] }
  */
-export async function reviewBatch(batch, { config, contextText }) {
+export async function reviewBatch(batch, { config, contextText, signal }) {
   const prompt = batchReviewPrompt({ files: batch.files, contextText });
   const fileNames = batch.files.map((f) => f.path);
-  return failClipped(await review(prompt, config.model, batch.label, fileNames), batch);
+  return failClipped(await review(prompt, config, batch.label, fileNames, signal), batch);
 }
 
 // Code the model never saw cannot pass the gate: keep the findings, mark the batch failed.
@@ -30,21 +30,30 @@ function failClipped(result, unit) {
   };
 }
 
-async function review(prompt, model, label, files) {
-  const { text, usage, error } = await runOpenCode(prompt, model);
+async function review(prompt, { model, timeoutSeconds }, label, files, signal) {
+  const options = { signal, timeoutSeconds };
+  let { text, usage, error, retryable } = await runOpenCode(prompt, model, options);
+  // A timeout or crashed process is often transient: run the same prompt once more.
+  if (error && retryable && !signal?.aborted) {
+    const again = await runOpenCode(prompt, model, options);
+    usage = sumUsage([usage, again.usage]);
+    if (again.error) return { label, usage, error: `${error}. The retry also failed: ${again.error}` };
+    ({ text, error } = again);
+  }
   if (error) return { label, usage, error };
   try {
     return { label, usage, ...parseFindings(text, files) };
   } catch {
     // Retry once with the original evidence and a stricter output instruction.
   }
+  if (signal?.aborted) return { label, usage, error: 'Cancelled.' };
 
   const retryPrompt = `${prompt}
 
 OUTPUT RETRY: Return one valid JSON object only. Escape quotation marks, backslashes,
 and line breaks inside strings. Do not use Markdown fences or text outside the object.
 Keep findings and the summary concise so the entire JSON object fits in the response.`;
-  const retry = await runOpenCode(retryPrompt, model);
+  const retry = await runOpenCode(retryPrompt, model, options);
   const combinedUsage = sumUsage([usage, retry.usage]);
   if (retry.error) return { label, usage: combinedUsage, error: `Retry failed. ${retry.error}` };
   try {
@@ -60,13 +69,14 @@ Keep findings and the summary concise so the entire JSON object fits in the resp
  * returns { findings, summary }. Results keep the order of `units`; `completed`
  * counts finished units, since they can finish out of order.
  */
-export async function runUnits(units, { onProgress, concurrency = 1 } = {}) {
+export async function runUnits(units, { onProgress, concurrency = 1, signal } = {}) {
   const results = new Array(units.length);
   let next = 0;
   let completed = 0;
 
   const worker = async () => {
-    while (next < units.length) {
+    // A cancelled run finishes the batches in flight and starts no new ones.
+    while (next < units.length && !signal?.aborted) {
       const i = next++;
       const unit = units[i];
       onProgress?.({ phase: 'start', index: i, total: units.length, label: unit.label });

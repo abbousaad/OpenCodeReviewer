@@ -11,6 +11,7 @@ import { splitLines } from '../src/core/chunk.js';
 import { ConfigError, loadConfig } from '../src/core/config.js';
 import { batchDiffs } from '../src/core/diff.js';
 import { runUnits } from '../src/core/reviewer.js';
+import { deflateRawSync } from 'node:zlib';
 
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'oc-reviewer-'));
@@ -44,6 +45,11 @@ for (const expected of (process.env.MOCK_CONTEXT || '').split(',').filter(Boolea
 const reply = process.env.MOCK_REPLY;
 if (process.env.MOCK_EXPECT_KEY !== undefined && process.env.DEEPSEEK_API_KEY !== process.env.MOCK_EXPECT_KEY) process.exit(2);
 trace('start');
+// fail-once: the first call crashes, later calls answer normally.
+if (reply === 'fail-once' && !require('node:fs').existsSync(process.env.MOCK_FAIL_MARKER)) {
+  require('node:fs').writeFileSync(process.env.MOCK_FAIL_MARKER, '');
+  process.exit(1);
+}
 if (process.env.MOCK_DELAY_MS) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.MOCK_DELAY_MS));
 }
@@ -101,7 +107,7 @@ async function startDashboard(t, env) {
 }
 
 test('CI checks quoted filenames and fails closed', (t) => {
-  const { repo, env } = fixture(t);
+  const { root, repo, env } = fixture(t);
   const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
   const commit = (...args) => git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture', ...args);
   git('init', '-q');
@@ -117,6 +123,7 @@ test('CI checks quoted filenames and fails closed', (t) => {
     ['', 'major', 0],
     ['major', 'major', 1],
     ['failure', 'major', 3],
+    ['fail-once', 'major', 0],
     ['malformed', 'major', 3],
     ['retry-major', 'major', 1],
     ['partial', 'major', 0],
@@ -136,6 +143,7 @@ test('CI checks quoted filenames and fails closed', (t) => {
         MOCK_REPLY: reply,
         MOCK_CONTEXT: 'ARCHITECTURE_RULE,OWNER_ACCESS_RULE',
         MOCK_STANDALONE: '0',
+        MOCK_FAIL_MARKER: path.join(root, `failed-${reply}`),
         SEVERITY_GATE: gate,
       },
       encoding: 'utf8',
@@ -153,12 +161,14 @@ test('CI checks quoted filenames and fails closed', (t) => {
       let steps = 2;
       if (reply === 'no-usage') steps = 0;
       if (reply === 'partial') steps = 1;
-      if (['malformed', 'retry-major'].includes(reply)) steps = 4;
+      // A crashed call is retried once; a malformed reply gets one stricter retry.
+      if (['failure', 'malformed', 'retry-major'].includes(reply)) steps = 4;
       assert.equal(report.usage.inputTokens, steps ? steps * 135 : null);
       assert.equal(report.usage.outputTokens, steps ? steps * 30 : null);
       assert.equal(report.usage.totalTokens, steps ? steps * 165 : null);
       assert.equal(report.usage.costUsd, steps ? steps * 0.000125 : null);
-      assert.equal(report.usage.partial, ['failure', 'partial', 'no-usage'].includes(reply));
+      assert.equal(report.usage.partial, ['failure', 'fail-once', 'partial', 'no-usage'].includes(reply));
+      if (reply === 'failure') assert.match(report.errors[0].error, /The retry also failed/);
       const markdown = readFileSync(path.join(repo, 'review-report.md'), 'utf8');
       const cost = (steps * 0.000125).toLocaleString('en-US', {
         style: 'currency', currency: 'USD', maximumFractionDigits: 8,
@@ -835,4 +845,326 @@ test('saved settings sit between the bundled file and the reviewed repo file', (
   assert.ok(cfg.sources.includes('saved settings'));
   assert.equal(loadConfig({ overrides: { severityGate: 'info' }, settings: { severityGate: 'minor' } }).severityGate, 'info');
   assert.throws(() => loadConfig({ settings: { concurrency: 0 } }), /Saved settings: concurrency must be an integer/);
+});
+
+async function dashboardClient(t, extraEnv = {}) {
+  const { root, repo, env } = fixture(t);
+  writeFileSync(path.join(repo, 'source.js'), 'export const reviewed = true;\n');
+  const dashboardEnv = { ...env, REPO_DIR: repo, REVIEW_PASSWORD: 'test-password', MOCK_REPLY: 'minor', MOCK_STANDALONE: '1', ...extraEnv };
+  const started = await startDashboard(t, dashboardEnv);
+  const headers = {
+    authorization: 'Basic ' + Buffer.from('ocr-admin:test-password').toString('base64'),
+    'content-type': 'application/json',
+  };
+  const client = {
+    root, repo, env: dashboardEnv, ...started,
+    async call(method, url, body) {
+      const res = await fetch(client.base + url, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+      const text = await res.text();
+      return { status: res.status, data: text && /^[[{]/.test(text) ? JSON.parse(text) : text };
+    },
+    async waitFor(id, statuses, timeout = 8000) {
+      const until = Date.now() + timeout;
+      while (Date.now() < until) {
+        const { data } = await client.call('GET', `/api/review/${id}`);
+        if (statuses.includes(data.status)) return data;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      assert.fail(`run ${id} did not reach ${statuses}`);
+    },
+    async restart() {
+      client.server.kill();
+      await once(client.server, 'exit');
+      Object.assign(client, await startDashboard(t, dashboardEnv));
+    },
+  };
+  return client;
+}
+
+test('dashboard queues runs beyond maxParallelReviews and runs them one at a time', { timeout: 20000 }, async (t) => {
+  const trace = path.join(os.tmpdir(), `ocr-trace-${process.pid}-${Date.now()}`);
+  t.after(() => rmSync(trace, { force: true }));
+  const c = await dashboardClient(t, { MOCK_DELAY_MS: '400', MOCK_TRACE: trace });
+  const ids = [];
+  for (let i = 0; i < 3; i++) {
+    const res = await c.call('POST', '/api/review', { repoRoot: c.repo });
+    assert.equal(res.status, 202);
+    ids.push(res.data.id);
+  }
+  const list = (await c.call('GET', '/api/review')).data;
+  assert.equal(list.length, 3);
+  assert.ok(list.every((r) => !('report' in r) && !('log' in r)), 'the list leaves out reports and logs');
+  const byId = Object.fromEntries(list.map((r) => [r.id, r]));
+  assert.equal(byId[ids[0]].status, 'running');
+  assert.deepEqual([byId[ids[1]].status, byId[ids[1]].position], ['queued', 1]);
+  assert.deepEqual([byId[ids[2]].status, byId[ids[2]].position], ['queued', 2]);
+  assert.equal((await c.call('GET', '/api/stats')).data.queued, 2);
+
+  for (const id of ids) await c.waitFor(id, ['completed']);
+  // Model calls never overlap across runs with one review at a time.
+  const events = readFileSync(trace, 'utf8').trim().split('\n').map((l) => l.split(' ')).filter(([e]) => e !== 'help');
+  let inFlight = 0;
+  for (const [event] of events) {
+    inFlight += event === 'start' ? 1 : -1;
+    assert.ok(inFlight <= 1, 'two runs called the model at the same time');
+  }
+  const stats = (await c.call('GET', '/api/stats')).data;
+  assert.equal(stats.allTime.runs, 3);
+  assert.equal(stats.allTime.costUsd.toFixed(6), (3 * 0.00025).toFixed(6));
+  assert.equal(stats.thisMonth.runs, 3);
+});
+
+test('runs can be cancelled while queued or running, and only finished runs can be deleted', { timeout: 20000 }, async (t) => {
+  const c = await dashboardClient(t, { MOCK_DELAY_MS: '1500' });
+  for (let i = 1; i <= 4; i++) writeFileSync(path.join(c.repo, `more-${i}.js`), `export const n = ${i};\n`);
+  await c.call('PUT', '/api/settings', { settings: { concurrency: 1, batch: { maxFiles: 1 } } });
+  const first = (await c.call('POST', '/api/review', { repoRoot: c.repo })).data.id;
+  const second = (await c.call('POST', '/api/review', { repoRoot: c.repo })).data.id;
+
+  assert.equal((await c.call('DELETE', `/api/review/${second}`, {})).status, 409);
+  const dropped = await c.call('POST', `/api/review/${second}/cancel`, {});
+  assert.equal(dropped.status, 202);
+  assert.equal(dropped.data.status, 'cancelled');
+
+  await c.waitFor(first, ['running']);
+  const stopping = await c.call('POST', `/api/review/${first}/cancel`, {});
+  assert.equal(stopping.status, 202);
+  assert.equal(stopping.data.status, 'cancelling');
+  const cancelled = await c.waitFor(first, ['cancelled']);
+  assert.equal(cancelled.report.meta.cancelled, true);
+  assert.ok(cancelled.report.meta.skippedBatches >= 3, 'no new batches start after a cancel');
+  assert.equal((await c.call('POST', `/api/review/${first}/cancel`, {})).status, 409);
+
+  const stream = await fetch(`${c.base}/api/review/${first}/stream`, { headers: { authorization: 'Basic ' + Buffer.from('ocr-admin:test-password').toString('base64') } });
+  const last = (await stream.text()).trim().split('\n\n').map((m) => JSON.parse(m.slice(6))).at(-1);
+  assert.equal(last.type, 'cancelled');
+  assert.equal(last.report.meta.cancelled, true);
+
+  assert.equal((await c.call('DELETE', `/api/review/${first}`, {})).status, 204);
+  assert.equal((await c.call('GET', `/api/review/${first}`)).status, 404);
+  assert.equal((await c.call('DELETE', `/api/review/${first}`, {})).status, 404);
+  assert.equal((await c.call('DELETE', '/api/review/not-a-uuid', {})).status, 404);
+  assert.equal((await c.call('GET', '/api/review/..%2F..%2Fauth')).status, 404);
+  assert.equal((await c.call('POST', '/api/review/00000000-0000-4000-8000-000000000000/cancel', {})).status, 404);
+});
+
+test('runs survive a restart, interrupted runs are marked, and old runs are pruned', { timeout: 30000 }, async (t) => {
+  const c = await dashboardClient(t);
+  const done = (await c.call('POST', '/api/review', { repoRoot: c.repo })).data.id;
+  await c.waitFor(done, ['completed']);
+
+  // A run that was active when the server stopped cannot resume.
+  const stale = '11111111-1111-4111-8111-111111111111';
+  writeFileSync(path.join(c.env.DATA_DIR, 'runs', `${stale}.json`), JSON.stringify({
+    id: stale, repoRoot: c.repo, model: 'test/x', severityGate: 'major', status: 'running',
+    progress: { total: 2, done: 1, current: 'b' }, createdAt: '2000-01-01T00:00:00.000Z', log: [],
+  }));
+  await c.restart();
+
+  const saved = await c.call('GET', `/api/review/${done}`);
+  assert.equal(saved.status, 200);
+  assert.equal(saved.data.status, 'completed');
+  assert.equal(saved.data.report.findings.length, 1);
+  const md = await c.call('GET', `/api/review/${done}/report.md`);
+  assert.equal(md.status, 200);
+  assert.equal((await c.call('GET', `/api/review/${done}/report.json`)).data.totalFindings, 1);
+  assert.equal((await c.call('GET', `/api/review/${stale}`)).data.status, 'interrupted');
+  assert.equal((await c.call('GET', '/api/stats')).data.allTime.runs, 1);
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(path.join(c.env.DATA_DIR, 'runs', `${done}.json`)).mode & 0o777, 0o600);
+  }
+
+  assert.equal((await c.call('PUT', '/api/settings', { settings: { runsToKeep: 2 } })).status, 200);
+  const ids = [];
+  for (let i = 0; i < 2; i++) {
+    const id = (await c.call('POST', '/api/review', { repoRoot: c.repo })).data.id;
+    await c.waitFor(id, ['completed']);
+    ids.push(id);
+  }
+  const list = (await c.call('GET', '/api/review')).data.map((r) => r.id);
+  assert.deepEqual(list.sort(), ids.sort(), 'only the newest runs are kept');
+  assert.equal(readdirSync(path.join(c.env.DATA_DIR, 'runs')).filter((f) => f.endsWith('.json')).length, 2);
+  // Pruned runs still count toward the spend totals.
+  assert.equal((await c.call('GET', '/api/stats')).data.allTime.runs, 3);
+});
+
+test('the repo picker lists directories and Git repos inside the review root only', { timeout: 10000 }, async (t) => {
+  const c = await dashboardClient(t);
+  mkdirSync(path.join(c.repo, 'app', '.git'), { recursive: true });
+  mkdirSync(path.join(c.repo, 'group', 'service', '.git'), { recursive: true });
+  mkdirSync(path.join(c.repo, 'group', 'notes'));
+  mkdirSync(path.join(c.repo, 'node_modules', 'dep'), { recursive: true });
+  mkdirSync(path.join(c.root, 'secret'));
+  symlinkSync(path.join(c.root, 'secret'), path.join(c.repo, 'escape'));
+  const { data } = await c.call('GET', '/api/repos/candidates');
+  const names = data.candidates.map((r) => r.name);
+  assert.equal(data.candidates[0].depth, 0);
+  assert.ok(names.includes('app') && data.candidates.find((r) => r.name === 'app').git);
+  assert.ok(names.includes(path.join('group', 'service')));
+  assert.ok(!names.includes(path.join('group', 'notes')), 'nested folders appear only when they are Git repos');
+  assert.ok(!names.some((n) => n.startsWith('node_modules') || n === 'escape'));
+});
+
+
+/** Build a ZIP in memory. Entries: { name, data, deflate?, unixMode?, declaredSize? }. */
+function makeZip(entries) {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc32 = (buf) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const e of entries) {
+    const data = Buffer.from(e.data ?? '');
+    const body = e.deflate ? deflateRawSync(data) : data;
+    const name = Buffer.from(e.name);
+    const size = e.declaredSize ?? data.length;
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x800, 6);
+    local.writeUInt16LE(e.deflate ? 8 : 0, 8);
+    local.writeUInt32LE(crc32(data), 14);
+    local.writeUInt32LE(body.length, 18);
+    local.writeUInt32LE(size, 22);
+    local.writeUInt16LE(name.length, 26);
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE((3 << 8) | 20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x800, 8);
+    central.writeUInt16LE(e.deflate ? 8 : 0, 10);
+    central.writeUInt32LE(crc32(data), 16);
+    central.writeUInt32LE(body.length, 20);
+    central.writeUInt32LE(size, 24);
+    central.writeUInt16LE(name.length, 28);
+    central.writeUInt32LE(((e.unixMode ?? 0o100644) << 16) >>> 0, 38);
+    central.writeUInt32LE(offset, 42);
+    locals.push(local, name, body);
+    centrals.push(central, name);
+    offset += 30 + name.length + body.length;
+  }
+  const cd = Buffer.concat(centrals);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(cd.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, end]);
+}
+
+test('repositories: local folders, ZIP uploads and safe removal', { timeout: 20000 }, async (t) => {
+  const c = await dashboardClient(t, { MAX_UPLOAD_FILE_MB: '0.001' });
+  const auth = { authorization: 'Basic ' + Buffer.from('ocr-admin:test-password').toString('base64') };
+  const upload = (buf, name = 'demo', type = 'application/zip') => fetch(`${c.base}/api/repos/upload?name=${encodeURIComponent(name)}`, {
+    method: 'POST', headers: { ...auth, 'content-type': type }, body: buf,
+  }).then(async (r) => ({ status: r.status, data: await r.json() }));
+
+  // Local folders must be inside the review root, and are saved once.
+  const outside = path.join(c.root, 'outside');
+  mkdirSync(outside);
+  assert.equal((await c.call('POST', '/api/repos', { source: 'local', path: outside })).status, 403);
+  const local = await c.call('POST', '/api/repos', { source: 'local', path: c.repo, name: 'My app' });
+  assert.equal(local.status, 201);
+  assert.equal((await c.call('POST', '/api/repos', { source: 'local', path: c.repo })).status, 409);
+
+  // A ZIP with one top-level folder is unwrapped; ignored folders, symlinks and big files are skipped.
+  const zip = makeZip([
+    { name: 'project/src/app.js', data: 'export const fromZip = 1;\n', deflate: true },
+    { name: 'project/README.md', data: '# demo' },
+    { name: 'project/node_modules/dep/index.js', data: 'x' },
+    { name: 'project/link', data: '/etc/passwd', unixMode: 0o120777 },
+    { name: 'project/big.js', data: 'x'.repeat(5000) },
+  ]);
+  const up = await upload(zip);
+  assert.equal(up.status, 201, JSON.stringify(up.data));
+  assert.equal(up.data.source, 'upload');
+  assert.equal(up.data.files, 2);
+  assert.deepEqual(up.data.skipped, { 'ignored folders': 1, 'links or special files': 1, 'files over the size limit': 1 });
+  const stored = path.join(c.env.DATA_DIR, 'repos', up.data.id);
+  assert.equal(readFileSync(path.join(stored, 'src', 'app.js'), 'utf8'), 'export const fromZip = 1;\n');
+  assert.throws(() => statSync(path.join(stored, 'link')), { code: 'ENOENT' });
+
+  // Zip slip, absolute paths, lying sizes and non-ZIP bodies are rejected and leave nothing behind.
+  const before = readdirSync(path.join(c.env.DATA_DIR, 'repos')).sort();
+  for (const bad of [
+    makeZip([{ name: '../escape.js', data: 'x' }]),
+    makeZip([{ name: 'a/../../escape.js', data: 'x' }]),
+    makeZip([{ name: '/etc/cron.d/x', data: 'x' }]),
+    makeZip([{ name: 'bomb.js', data: 'y'.repeat(800), deflate: true, declaredSize: 10 }]),
+    Buffer.from('not a zip'),
+  ]) {
+    const res = await upload(bad);
+    assert.equal(res.status, 400, JSON.stringify(res.data));
+  }
+  assert.equal((await upload(zip, 'x', 'text/plain')).status, 415);
+  assert.deepEqual(readdirSync(path.join(c.env.DATA_DIR, 'repos')).sort(), before);
+  assert.throws(() => statSync(path.join(c.env.DATA_DIR, 'escape.js')), { code: 'ENOENT' });
+  // A cross-site page cannot upload.
+  const crossSite = await fetch(`${c.base}/api/repos/upload`, {
+    method: 'POST', headers: { ...auth, 'content-type': 'application/zip', origin: 'https://evil.example' }, body: zip,
+  });
+  assert.equal(crossSite.status, 403);
+
+  // A saved repo is reviewed by id, and the run and spend point back to it.
+  const run = await c.call('POST', '/api/review', { repoId: up.data.id });
+  assert.equal(run.status, 202);
+  assert.equal(run.data.repoName, 'demo');
+  assert.equal((await c.call('DELETE', `/api/repos/${up.data.id}`, {})).status, 409, 'cannot remove a repo under review');
+  await c.waitFor(run.data.id, ['completed']);
+  const listed = (await c.call('GET', '/api/repos')).data.repos.find((r) => r.id === up.data.id);
+  assert.equal(listed.lastRun.id, run.data.id);
+  assert.equal(listed.spend.runs, 1);
+  assert.equal((await c.call('POST', '/api/review', { repoId: 'nope' })).status, 404);
+
+  // Removing an upload deletes its copy; removing a local repo never touches the folder.
+  assert.equal((await c.call('DELETE', `/api/repos/${up.data.id}`, {})).status, 204);
+  assert.throws(() => statSync(stored), { code: 'ENOENT' });
+  assert.equal((await c.call('DELETE', `/api/repos/${local.data.id}`, {})).status, 204);
+  assert.ok(statSync(path.join(c.repo, 'source.js')).isFile());
+  assert.equal((await c.call('GET', '/api/repos')).data.repos.length, 0);
+  // Past runs stay readable after their repo is removed.
+  assert.equal((await c.call('GET', `/api/review/${run.data.id}`)).status, 200);
+});
+
+test('Git clone URLs must be https, credential-free and on an allowed host', { timeout: 10000 }, async (t) => {
+  const c = await dashboardClient(t, { GIT_ALLOWED_HOSTS: 'github.com' });
+  for (const [url, status] of [
+    ['http://github.com/a/b.git', 400],
+    ['file:///etc', 400],
+    ['ext::sh -c id', 400],
+    ['https://user:pass@github.com/a/b.git', 400],
+    ['https://github.com/a/b.git?x=1', 400],
+    ['https://169.254.169.254/latest', 403],
+    ['https://internal.example/a.git', 403],
+  ]) {
+    const res = await c.call('POST', '/api/repos', { source: 'git', url });
+    assert.equal(res.status, status, `${url}: ${JSON.stringify(res.data)}`);
+  }
+  assert.equal((await c.call('POST', '/api/repos', { source: 'git', url: 'https://github.com/a/b.git', branch: '--upload-pack=x' })).status, 400);
+  assert.equal((await c.call('GET', '/api/repos')).data.repos.length, 0);
+});
+
+test('the model call timeout defaults to 300 s, is validated, and OC_TIMEOUT_MS overrides it', (t) => {
+  const saved = process.env.OC_TIMEOUT_MS;
+  t.after(() => {
+    if (saved === undefined) delete process.env.OC_TIMEOUT_MS;
+    else process.env.OC_TIMEOUT_MS = saved;
+  });
+  delete process.env.OC_TIMEOUT_MS;
+  assert.equal(loadConfig().timeoutSeconds, 300);
+  assert.equal(loadConfig({ settings: { timeoutSeconds: 600 } }).timeoutSeconds, 600);
+  assert.throws(() => loadConfig({ settings: { timeoutSeconds: 5 } }), /timeoutSeconds must be an integer from 30 to 3600/);
+  process.env.OC_TIMEOUT_MS = '450000';
+  assert.equal(loadConfig({ settings: { timeoutSeconds: 600 } }).timeoutSeconds, 450);
+  process.env.OC_TIMEOUT_MS = '1000';
+  assert.throws(() => loadConfig(), /Invalid timeoutSeconds: 1\. .*OC_TIMEOUT_MS is in milliseconds/);
 });
