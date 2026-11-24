@@ -9,11 +9,12 @@
   <body>
     <header>
       <div>
-        <h1>🔍 OpenCodeReviewer</h1>
-        <p class="subtitle">OpenCode-powered code review · standalone batch mode</p>
+        <h1>OpenCodeReviewer</h1>
+        <p class="subtitle">AI code review</p>
       </div>
       <nav>
         <a href="/">Dashboard</a>
+        <a href="/repos.html">Repositories</a>
         <a href="/settings.html" aria-current="page">Settings</a>
         <button type="button" id="logout" class="secondary">Sign out</button>
       </nav>
@@ -39,6 +40,21 @@
               </select>
             </label>
           </div>
+        </section>
+
+        <section class="panel">
+          <h2>Queue and history</h2>
+          <div class="row">
+            <label data-key="maxParallelReviews">
+              Reviews at the same time <span class="hint">(1–8, others wait in a queue)</span>
+              <input id="maxParallelReviews" type="number" min="1" max="8" step="1" />
+            </label>
+            <label data-key="runsToKeep">
+              Runs to keep <span class="hint">(1–500, oldest are deleted)</span>
+              <input id="runsToKeep" type="number" min="1" max="500" step="1" />
+            </label>
+          </div>
+          <p class="hint" id="load-hint"></p>
         </section>
 
         <section class="panel">
@@ -77,6 +93,12 @@
             <label data-key="concurrency">
               Batches at the same time <span class="hint">(1–16)</span>
               <input id="concurrency" type="number" min="1" max="16" step="1" />
+            </label>
+          </div>
+          <div class="row">
+            <label data-key="timeoutSeconds">
+              Model call timeout <span class="hint">(seconds, 30–3600; a timed-out batch is retried once)</span>
+              <input id="timeoutSeconds" type="number" min="30" max="3600" step="1" />
             </label>
           </div>
           <label data-key="contextFileRequired" class="checkbox">

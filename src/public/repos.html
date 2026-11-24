@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Repositories — OpenCodeReviewer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>OpenCodeReviewer</h1>
+        <p class="subtitle">AI code review</p>
+      </div>
+      <nav>
+        <a href="/">Dashboard</a>
+        <a href="/repos.html" aria-current="page">Repositories</a>
+        <a href="/settings.html">Settings</a>
+        <button type="button" id="logout" class="secondary">Sign out</button>
+      </nav>
+    </header>
+
+    <main class="wide">
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Add repository</h2>
+        </div>
+        <div class="tabs" role="tablist">
+          <button type="button" role="tab" class="tab on" data-tab="local" aria-selected="true">Local folder</button>
+          <button type="button" role="tab" class="tab" data-tab="upload" aria-selected="false">Upload</button>
+          <button type="button" role="tab" class="tab" data-tab="git" aria-selected="false">Git URL</button>
+        </div>
+
+        <form id="tab-local" class="tab-body">
+          <div class="form-grid">
+            <label class="span-2">
+              Folder <span class="hint" id="root-hint"></span>
+              <select id="local-path" required></select>
+            </label>
+            <label>
+              Name <span class="hint">(optional)</span>
+              <input id="local-name" maxlength="100" />
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit">Add folder</button>
+            <span class="hint">Removing a local repository never deletes your files.</span>
+          </div>
+        </form>
+
+        <form id="tab-upload" class="tab-body hidden">
+          <div class="form-grid">
+            <div class="span-2 pick">
+              <span class="pick-label">Source</span>
+              <div class="pick-buttons">
+                <button type="button" class="secondary" id="pick-folder">Choose folder…</button>
+                <button type="button" class="secondary" id="pick-zip">Choose .zip…</button>
+                <input type="file" id="folder-input" webkitdirectory multiple class="hidden" />
+                <input type="file" id="zip-input" accept=".zip,application/zip" class="hidden" />
+              </div>
+              <span class="hint" id="pick-summary">Nothing selected.</span>
+            </div>
+            <label>
+              Name <span class="hint">(optional)</span>
+              <input id="upload-name" maxlength="100" />
+            </label>
+          </div>
+          <div class="progress-bar hidden" id="upload-progress"><div id="upload-fill"></div></div>
+          <div class="actions">
+            <button type="submit" id="upload-btn" disabled>Upload</button>
+            <span class="hint" id="upload-limits"></span>
+          </div>
+        </form>
+
+        <form id="tab-git" class="tab-body hidden">
+          <div class="form-grid">
+            <label class="span-2">
+              HTTPS URL
+              <input id="git-url" type="url" placeholder="https://github.com/org/repo.git" required />
+            </label>
+            <label>
+              Branch <span class="hint">(optional)</span>
+              <input id="git-branch" placeholder="default branch" />
+            </label>
+          </div>
+          <div class="form-grid">
+            <label class="span-2">
+              Name <span class="hint">(optional)</span>
+              <input id="git-name" maxlength="100" />
+            </label>
+          </div>
+          <div class="actions">
+            <button type="submit">Clone</button>
+            <span class="hint" id="git-hint"></span>
+          </div>
+        </form>
+
+        <div id="banner" class="banner hidden" role="alert"></div>
+      </section>
+
+      <section class="panel flush">
+        <div class="panel-head">
+          <h2>Repositories</h2>
+          <span class="hint" id="repo-count"></span>
+        </div>
+        <div class="table-wrap">
+          <table class="runs">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Source</th>
+                <th class="num">Size</th>
+                <th>Last review</th>
+                <th class="num">Spent</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="repos"></tbody>
+          </table>
+        </div>
+        <p class="empty hidden" id="repos-empty">No repositories yet. Add one above.</p>
+      </section>
+    </main>
+
+    <script src="common.js"></script>
+    <script src="zip.js"></script>
+    <script src="repos.js"></script>
+  </body>
+</html>

@@ -13,7 +13,8 @@ export const SECRETS = {
 };
 
 // Settings that an environment variable fixes; the page shows them read-only.
-const LOCKED_BY = { model: 'OC_MODEL', severityGate: 'SEVERITY_GATE' };
+const LOCKED_BY = { model: 'OC_MODEL', severityGate: 'SEVERITY_GATE', maxParallelReviews: 'MAX_PARALLEL_REVIEWS',
+  timeoutSeconds: 'OC_TIMEOUT_MS' };
 
 export function readSettings() {
   return readJson(SETTINGS_FILE) ?? {};
@@ -21,6 +22,11 @@ export function readSettings() {
 
 function readSecrets() {
   return readJson(SECRETS_FILE) ?? {};
+}
+
+/** One saved secret, for server-side use only. */
+export function readSecret(key) {
+  return readSecrets()[key] || null;
 }
 
 export function lockedSettings() {

@@ -5,8 +5,11 @@ import { initAuth } from './core/auth.js';
 import { setExtraEnv } from './core/opencodeClient.js';
 import { providerEnv } from './core/settings.js';
 import { DATA_DIR, ensureDataDir } from './core/store.js';
+import { initRuns } from './core/jobs.js';
 import authRouter, { csrfGuard, hostGuard, requireAuth } from './routes/auth.js';
 import reviewRouter from './routes/review.js';
+import reposRouter from './routes/repos.js';
+import { initRepos } from './core/repos.js';
 import settingsRouter from './routes/settings.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,6 +18,8 @@ const host = process.env.HOST || '127.0.0.1';
 const port = Number(process.env.PORT || 3000);
 
 ensureDataDir();
+initRuns();
+initRepos();
 const auth = initAuth();
 setExtraEnv(providerEnv);
 
@@ -35,6 +40,7 @@ app.use(requireAuth);
 app.use('/api/auth', authRouter);
 app.use('/api', settingsRouter);
 app.use('/api', reviewRouter);
+app.use('/api', reposRouter);
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Answer request errors with JSON instead of Express's HTML page, which shows

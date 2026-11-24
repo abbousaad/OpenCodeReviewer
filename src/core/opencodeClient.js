@@ -12,18 +12,23 @@ export function setExtraEnv(getEnv) {
   extraEnv = getEnv;
 }
 
+export const DEFAULT_TIMEOUT_SECONDS = 300;
+
 /**
  * Run one headless OpenCode request with the model selected for this review.
+ * `retryable` is set when the process timed out or exited with an error, as
+ * opposed to a cancel or a missing opencode binary.
  */
-export async function runOpenCode(prompt, model) {
+export async function runOpenCode(prompt, model, { signal, timeoutSeconds = DEFAULT_TIMEOUT_SECONDS } = {}) {
   const env = { ...process.env, ...extraEnv() };
   delete env.REVIEW_PASSWORD;
   if (!env.OPENCODE_CONFIG) {
     env.OPENCODE_CONFIG = path.join(ROOT, 'opencode.json');
   }
-  const timeout = Number(process.env.OC_TIMEOUT_MS || 180000);
+  const timeout = timeoutSeconds * 1000;
   let stdout = '';
   let failure;
+  let retryable = false;
   try {
     // OpenCode 1.x runs privately by default. OpenCode 2.x exposes this flag.
     // Parallel batches share one check; a failed check is retried next time.
@@ -38,6 +43,7 @@ export async function runOpenCode(prompt, model) {
       env,
       timeout,
       maxBuffer: 32 * 1024 * 1024,
+      signal,
     });
     // Send the prompt on stdin: Linux caps one argument at 128 KiB (E2BIG).
     // A write error means OpenCode exited early, which the exit status reports.
@@ -48,11 +54,19 @@ export async function runOpenCode(prompt, model) {
     // Node's error message can include the prompt from the command arguments.
     const detail = err.stderr?.trim().split('\n').slice(-3).join(' ');
     stdout = err.stdout || '';
-    failure = `opencode run failed: ${detail || err.signal || err.code || 'unknown error'}`;
+    // execFile kills the process with SIGTERM when the timeout passes.
+    const timedOut = err.killed && err.signal === 'SIGTERM' && !signal?.aborted;
+    retryable = !signal?.aborted && err.code !== 'ENOENT';
+    failure = signal?.aborted
+      ? 'Cancelled.'
+      : timedOut
+        ? `opencode run timed out after ${timeoutSeconds} s`
+        : `opencode run failed: ${detail || err.signal || err.code || 'unknown error'}`;
   }
   const result = parseRunOutput(stdout);
   result.error ??= failure;
   if (result.error) result.usage.partial = true;
+  result.retryable = Boolean(failure) && retryable;
   return result;
 }
 

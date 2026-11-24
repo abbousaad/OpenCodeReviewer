@@ -1,4 +1,4 @@
-const NUMBER_FIELDS = ['batch.maxFiles', 'batch.maxBytes', 'diff.maxHunkBytesPerCall', 'concurrency'];
+const NUMBER_FIELDS = ['batch.maxFiles', 'batch.maxBytes', 'diff.maxHunkBytesPerCall', 'concurrency', 'maxParallelReviews', 'runsToKeep', 'timeoutSeconds'];
 let view;
 
 function render(data) {
@@ -21,6 +21,10 @@ function render(data) {
   $('batch.maxBytes').value = settings.batch.maxBytes;
   $('diff.maxHunkBytesPerCall').value = settings.diff.maxHunkBytesPerCall;
   $('concurrency').value = settings.concurrency;
+  $('timeoutSeconds').value = settings.timeoutSeconds;
+  $('maxParallelReviews').value = settings.maxParallelReviews;
+  $('runsToKeep').value = settings.runsToKeep;
+  updateLoadHint();
   $('contextFileRequired').checked = settings.contextFileRequired;
 
   for (const [key, envName] of Object.entries(locked)) {
@@ -121,6 +125,15 @@ function showBanner(text) {
   $('banner').textContent = text;
   $('banner').className = 'banner error';
 }
+
+// The most model calls in flight at once: parallel reviews × batches per review.
+function updateLoadHint() {
+  const reviews = Number($('maxParallelReviews').value) || 1;
+  const batches = Number($('concurrency').value) || 1;
+  $('load-hint').textContent = `Up to ${reviews * batches} model call(s) at once (${reviews} review(s) × ${batches} batch(es) each).`;
+}
+$('maxParallelReviews').addEventListener('input', updateLoadHint);
+$('concurrency').addEventListener('input', updateLoadHint);
 
 $('model-select').addEventListener('change', () => {
   $('model-custom').classList.toggle('hidden', $('model-select').value !== '');

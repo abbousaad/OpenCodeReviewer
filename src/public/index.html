@@ -3,34 +3,58 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenCodeReviewer — AI Code Review</title>
+    <title>Dashboard — OpenCodeReviewer</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header>
       <div>
-        <h1>🔍 OpenCodeReviewer</h1>
-        <p class="subtitle">OpenCode-powered code review · standalone batch mode</p>
+        <h1>OpenCodeReviewer</h1>
+        <p class="subtitle">AI code review</p>
       </div>
       <nav>
         <a href="/" aria-current="page">Dashboard</a>
+        <a href="/repos.html">Repositories</a>
         <a href="/settings.html">Settings</a>
         <button type="button" id="logout" class="secondary">Sign out</button>
       </nav>
     </header>
 
-    <main>
+    <main class="wide">
+      <section class="stats" aria-label="Usage">
+        <div class="stat">
+          <span class="stat-label">Spent · all time</span>
+          <span class="stat-value" id="stat-total">—</span>
+          <span class="stat-note" id="stat-total-note"></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Spent · <span id="stat-month-name">this month</span></span>
+          <span class="stat-value" id="stat-month">—</span>
+          <span class="stat-note" id="stat-month-note"></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Tokens · all time</span>
+          <span class="stat-value" id="stat-tokens">—</span>
+          <span class="stat-note" id="stat-tokens-note"></span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Queue</span>
+          <span class="stat-value" id="stat-queue">—</span>
+          <span class="stat-note" id="stat-queue-note"></span>
+        </div>
+      </section>
+
       <section class="panel">
-        <h2>Start a review</h2>
+        <h2>New review</h2>
         <form id="review-form">
-          <label>
-            Repository path <span class="hint">(absolute path within the configured review directory)</span>
-            <input id="repoRoot" name="repoRoot" required />
-          </label>
-          <div class="row">
+          <div class="form-grid">
+            <label class="span-2">
+              Repository <a class="hint-link" href="/repos.html">manage</a>
+              <select id="repo-select" required></select>
+            </label>
             <label>
               Severity gate
-              <select id="severityGate" name="severityGate">
+              <select id="severityGate">
                 <option value="info">info</option>
                 <option value="minor">minor</option>
                 <option value="major" selected>major</option>
@@ -39,30 +63,39 @@
             </label>
             <label>
               Model
-              <input id="model" name="model" placeholder="deepseek/deepseek-flash" />
+              <input id="model" placeholder="deepseek/deepseek-flash" />
             </label>
           </div>
-          <button type="submit" id="start-btn">Review codebase</button>
+          <div class="actions">
+            <button type="submit" id="start-btn">Start review</button>
+            <span class="hint" id="root-hint"></span>
+          </div>
         </form>
-        <div id="banner" class="banner hidden"></div>
+        <div id="banner" class="banner hidden" role="alert"></div>
       </section>
 
-      <section class="panel hidden" id="progress-panel">
-        <h2>Progress</h2>
-        <div class="progress-bar"><div id="progress-fill"></div></div>
-        <p id="progress-text">Waiting…</p>
-        <ul id="log"></ul>
-      </section>
-
-      <section class="panel hidden" id="results-panel">
-        <div class="results-head">
-          <h2>Results</h2>
-          <a id="download" href="#" download="review-report.md">⬇ Download report.md</a>
+      <section class="panel flush">
+        <div class="panel-head">
+          <h2>Runs</h2>
+          <span class="hint" id="runs-count"></span>
         </div>
-        <div id="gate" class="gate"></div>
-        <p id="usage"></p>
-        <div id="counts" class="counts"></div>
-        <div id="findings"></div>
+        <div class="table-wrap">
+          <table class="runs">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Repository</th>
+                <th>Findings</th>
+                <th class="num">Cost</th>
+                <th class="num">Duration</th>
+                <th>Started</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="runs"></tbody>
+          </table>
+        </div>
+        <p class="empty hidden" id="runs-empty">No runs yet. Start a review above.</p>
       </section>
     </main>
 
