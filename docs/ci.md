@@ -15,9 +15,9 @@ docker run --rm \
 
 Exits `0` for a completed review that passes the severity gate and `1` when a
 finding meets or exceeds the gate (default `major`). Exits `2` for invalid
-flags or configuration, and `3` for other fatal errors or an incomplete review. CI writes reports
-to the repo directory by default, including partial results when a batch fails.
-Set `REPORT_DIR` to change the output directory.
+flags or configuration, and `3` for other fatal errors or an incomplete
+review. CI writes reports to the repo directory by default, including partial
+results when a batch fails. Set `REPORT_DIR` to change the output directory.
 
 | Flag | Meaning |
 | --- | --- |
@@ -82,6 +82,11 @@ When no explicit input is supplied, the first available trigger wins:
 | Single commit | `REVIEW_COMMIT`, `CI_COMMIT_SHA` | `sha^..sha` |
 | Fallback | None | Last commit on the checkout |
 
+## Pipeline examples
+
+Both examples use `opencodereviewer:latest`. Build the image and push it to a
+registry your runners can pull from, then use that image name.
+
 ## GitLab CI (`.gitlab-ci.yml`)
 
 ```yaml
@@ -112,7 +117,7 @@ jobs:
     container:
       image: opencodereviewer:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { fetch-depth: 0 }
       - run: opencodereviewer ci "$GITHUB_WORKSPACE"
         env:

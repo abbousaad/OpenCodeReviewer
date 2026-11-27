@@ -5,8 +5,8 @@
 ![OpenCodeReviewer layers](assets/architecture.png)
 
 The CLI and the dashboard share one review engine in `src/core/`. Each diff
-unit or source batch becomes one prompt: the reviewer's role, the project's
-business rules, the security skills, the code, and a JSON contract for the
+unit or source batch becomes one prompt: the reviewer's role, the security
+skills, the project's business rules, the code, and a JSON contract for the
 answer. OpenCode sends it to the model and returns **structured JSON
 findings** (`file, line, severity, category, message, suggestion`), which are
 aggregated into `review-report.md` and `review-report.json`.
@@ -24,6 +24,12 @@ records, valid state transitions, and expected edge cases. For example, a todo
 app could specify that only the owner can read a todo and that requests by
 other users return HTTP 404. See this repository's
 [`BUSINESS_LOGIC.md`](../BUSINESS_LOGIC.md) for a sample structure.
+
+> [!WARNING]
+> In CI the supplied directory is the checkout under review, so a pull request
+> can edit the rules it is reviewed against. Until the rules are read from the
+> target branch (roadmap task P4-02), review changes to `BUSINESS_LOGIC.md` and
+> the context files by hand.
 
 The reviewer also reads the first available project context file, typically
 `REVIEW_CONTEXT.md` or `ARCHITECTURE.md`. Each review prompt includes the files

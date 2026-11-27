@@ -17,6 +17,8 @@ Settings live in `review.config.json`.
 | `diff.maxHunkBytesPerCall` | CI diff grouping size limit                            |
 | `include` / `exclude` | Glob filters for which files are reviewed                   |
 | `timeoutSeconds`      | Model call timeout, `30` to `3600` (default `300`; env `OC_TIMEOUT_MS` in ms) |
+| `maxParallelReviews`  | Dashboard runs executed at once, `1` to `8` (default `1`; env `MAX_PARALLEL_REVIEWS`) |
+| `runsToKeep`          | Dashboard runs kept in history, `1` to `500` (default `50`) |
 
 ## Precedence
 
@@ -30,7 +32,8 @@ Settings are applied in this order, and later sources win:
    review must not choose its own model, gate, context requirement or request
    rate.
 4. The file passed with `--config`. It can set every key.
-5. The `OC_MODEL` and `SEVERITY_GATE` environment variables.
+5. The `OC_MODEL`, `SEVERITY_GATE`, `MAX_PARALLEL_REVIEWS` and `OC_TIMEOUT_MS`
+   environment variables.
 6. The `--gate`, `--model` and `--concurrency` flags, or the dashboard form.
 
 Dashboard reviews also apply the settings saved on the Settings page, between
@@ -39,6 +42,23 @@ steps 2 and 3. The CLI does not read them.
 Every file is validated. An unknown key, a wrong type or invalid JSON stops the
 review with exit `2` and names the file and key. In CI, keep `--config` files
 outside the reviewed checkout, so a change under review cannot edit them.
+
+## Environment variables
+
+| Variable | Meaning | Default |
+| --- | --- | --- |
+| `DEEPSEEK_API_KEY` | Model provider key; overrides the key saved in Settings | — |
+| `OC_MODEL`, `SEVERITY_GATE` | Model and gate; lock the Settings fields | — |
+| `MAX_PARALLEL_REVIEWS`, `OC_TIMEOUT_MS` | Parallel runs and call timeout (ms); lock the Settings fields | — |
+| `REPORT_DIR` | Where CI writes its reports | the reviewed directory |
+| `HOST`, `PORT` | Dashboard address | `127.0.0.1`, `3000` (`0.0.0.0` in Docker) |
+| `DATA_DIR` | Password, settings, secrets, runs and uploads | `data/` (`/data` in Docker) |
+| `REPO_DIR` | Root for **Local folder** repositories | working directory (`/repo` in Docker) |
+| `REVIEW_PASSWORD` | Fixed dashboard password; skips the forced change | — |
+| `ALLOWED_HOSTS` | Extra host names the dashboard answers to | — |
+| `GIT_ALLOWED_HOSTS` | Hosts allowed for Git URL repositories | `github.com,gitlab.com,bitbucket.org` |
+| `MAX_UPLOAD_MB`, `MAX_UPLOAD_FILES`, `MAX_UPLOAD_FILE_MB` | Upload limits | `200`, `20000`, `2` |
+| `OPENCODE_CONFIG` | OpenCode config file | `opencode.json` in the reviewer |
 
 ## Development
 

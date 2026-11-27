@@ -93,21 +93,22 @@ A reviewed directory's own `review.config.json` can still change the scope and
 batch sizes for that directory, and the dashboard form's model and gate apply
 to a single run.
 
-The page also stores the DeepSeek API key and a GitHub token (used for cloning
-private repositories in a later release) in `/data/secrets.json` (mode `0600`).
+The page also stores the DeepSeek API key and a GitHub token (used to clone
+private github.com repositories) in `/data/secrets.json` (mode `0600`).
 Saved secrets are never sent back to the browser; the page shows only whether
 each one is set. The key is passed to OpenCode when `DEEPSEEK_API_KEY` is not
 set in the environment.
 
-Environment variables take precedence: when `OC_MODEL`, `SEVERITY_GATE` or
-`DEEPSEEK_API_KEY` is set, the matching field is read-only. With a key saved in
+Environment variables take precedence: when `OC_MODEL`, `SEVERITY_GATE`,
+`MAX_PARALLEL_REVIEWS`, `OC_TIMEOUT_MS` or `DEEPSEEK_API_KEY` is set, the
+matching field is read-only. With a key saved in
 Settings, the `-e DEEPSEEK_API_KEY` option above can be left out.
 
-> **Upgrading:** the password-free loopback mode is gone, and the Basic-auth
-> username changed from `review` to `ocr-admin`.
+## Tips
 
-The dashboard defaults to `/repo` in Docker and accepts directories within that
-mount. It streams batch progress and lets you download the report. Start with a
-small repo. See [How it works](how-it-works.md#batches-and-large-files) for how
-large files are split.
+- Start with a small repository to check the model, key and cost.
+- `REPO_DIR` (`/repo` in Docker) is only where **Local folder** looks;
+  uploads and clones live in `/data/repos/`.
+- See [How it works](how-it-works.md#batches-and-large-files) for how large
+  files are split.
 

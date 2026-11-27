@@ -5,7 +5,8 @@ This roadmap compares the current tool with the Master's final project brief,
 Codebases and Validating Business Logic Vulnerabilities*, and orders the
 remaining work. Section numbers (§) refer to the brief.
 
-Status as of 2026-11-27, on branch `feat/retry-and-pricing` (after #27).
+Status as of 2026-11-27: `main` after #27. Items marked *(P0-01)* are
+finished on `feat/retry-and-pricing` and land on `main` with that merge.
 
 ## Tracking
 
@@ -25,6 +26,8 @@ merges, tick the task here in the same PR. IDs are never reused: a dropped
 task keeps its ID and is struck through.
 
 Older issues that predate this scheme are mapped to an ID in the task text.
+Issues for the new IDs are not created yet; create each one when its task is
+picked up, before the branch.
 
 ## Where we are
 
@@ -49,9 +52,10 @@ Older issues that predate this scheme are mapped to an ID in the task text.
 - Saved repositories: local folder, ZIP/folder upload with a hardened
   extractor, shallow `https://` clone limited to allowed hosts.
 - Run queue, live progress over SSE, cancel, run history that survives
-  restarts, retry of failed batches.
+  restarts, retry of failed batches *(P0-01)*.
 - Findings grouped by file with filters, Markdown and JSON export.
-- Settings page with write-only secrets, model prices, spend totals.
+- Settings page with write-only secrets and spend totals; model prices
+  *(P0-01)*.
 
 **Large codebases (§3.1, first steps)**
 
@@ -64,7 +68,7 @@ Older issues that predate this scheme are mapped to an ID in the task text.
 
 **Hardening (§3.2, first steps)**
 
-- Reviews run as a `review` agent with every OpenCode tool denied.
+- Reviews run as a `review` agent with every OpenCode tool denied *(P0-01)*.
 - A repository's own `review.config.json` cannot change the model, gate,
   context requirement or request rate.
 - Config files are validated; unknown keys fail the run.
@@ -101,8 +105,11 @@ app, which has two bugs planted against its `BUSINESS_LOGIC.md`.
   (`todo.repository.js:22`, critical, with the full route → service → SQL
   chain) and rename of a completed todo (`todo.repository.js:17`, major, but
   filed as `logic` rather than a business-rule violation).
-- **31 findings in total.** Only 2 of the 5 major or critical findings are
-  real: about **40% precision at the level that blocks a merge**.
+- **31 findings in total.** Of the 5 major or critical findings, 2 are the
+  planted bugs, 1 is false (below), and 2 are general hardening advice that
+  the rules don't ask for (sign-in rate limiting, logging of denied requests).
+  Measured against the ground truth only, **2 of 5 findings that can block a
+  merge match a planted bug**.
 - **False positive from batching:** `app.js:33` "missing `await`" (major).
   `handleAuthenticated` is synchronous, but `app.js` and `auth.routes.js`
   were in different batches, so the model never saw it. This finding alone
@@ -110,7 +117,7 @@ app, which has two bugs planted against its `BUSINESS_LOGIC.md`.
 - **Other false or speculative findings:** `todo.validation.js:21` claims an
   untrimmed title is stored (the service trims it); `auth.repository.js:4`
   guesses about a "(unseen)" service, which the skill already forbids.
-- **Noise:** a duplicate of the critical finding at info level, 6 findings on
+- **Noise:** a duplicate of the critical finding at info level, 7 findings on
   test files, and most of the 26 minor and info findings are style or
   maintainability.
 - **Cost:** about 266k input tokens for a ~20-file app; the cost showed as
@@ -143,13 +150,13 @@ finding model and coverage data to build on.
 
 - [ ] **P1-01** First benchmark case from the todo lab app: the vulnerable
       version, a fixed version, and a ground-truth file listing the two
-      planted bugs. Today's baseline is 2 of 2 found, about 40% precision on
-      major and critical findings.
+      planted bugs. Today's baseline: 2 of 2 found; 2 of 5 major and critical
+      findings match the ground truth.
 - [ ] **P1-02** Benchmark layout: one vulnerable app and its fixed version per
       case, each with `BUSINESS_LOGIC.md` and a ground-truth file (file, line
       range, CWE, class, business rule, difficulty).
 - [ ] **P1-03** `scripts/eval/`: precision, recall, F1, paired recall,
-      coverage, tokens / cost / time, and stability over N runs.
+      coverage, tokens / cost / time, and stability over N runs. Needs P1-07.
 - [ ] **P1-04** Cover the §6 range from basic to advanced: BOLA/BFLA, mass
       assignment, injection with filter/WAF bypass, SSRF, deserialization,
       prototype pollution, race conditions, auth/JWT flaws, business logic
@@ -158,6 +165,11 @@ finding model and coverage data to build on.
 - [ ] **P1-06** Baseline numbers for the current single-agent reviewer,
       Semgrep and CodeQL. Every later task that changes results reports its
       delta against this.
+- [ ] **P1-07** Headless `scan` command for full-codebase review from the CLI
+      (#15), so the eval scripts can run whole-repo scans. Moved from P3-12.
+- [ ] **P1-08** At least one large real-world repository with planted bugs,
+      to measure coverage, cost and time where the context window matters
+      (§3.1, §6).
 
 ### Phase 2: Finding quality and proof-based reporting (§3.4, §3.5, §3.6, contribution 9)
 
@@ -186,7 +198,9 @@ Quick wins from the first full review come first in this phase.
       `evidence`, `status` (`lead`, `confirmed`, `not_reproduced`,
       `not_testable`, `dismissed`) and `proof`.
 - [ ] **P2-08** Only findings with a proof can fail the gate; everything else
-      is a lead.
+      is a lead. Until proof tests and live replays exist (Phase 7), a finding
+      confirmed by the checking pass (P2-06) counts as proven, and the rule
+      sits behind a setting so the gate keeps working.
 - [ ] **P2-09** SARIF 2.1.0 export (#11).
 - [ ] **P2-10** SARIF 2.1.0 and CycloneDX import.
 - [ ] **P2-11** Finding fingerprints, inline suppression comments and a
@@ -224,8 +238,7 @@ Quick wins from the first full review come first in this phase.
       estimate in `--dry-run`, and a budget limit that stops the run.
 - [ ] **P3-11** Completion check: a fresh agent re-checks coverage until it
       finds nothing new.
-- [ ] **P3-12** Headless `scan` command for full-codebase review from the CLI
-      (#15).
+- ~~**P3-12** Headless `scan` command~~ Moved to P1-07.
 
 ### Phase 4: Threat model and hardening (§3.2, WP4, contribution 3)
 
@@ -321,7 +334,7 @@ Quick wins from the first full review come first in this phase.
 
 - [ ] **P10-01** Full benchmark runs against Shannon, alibaba/open-code-review,
       spencermarx/open-code-review, OpenReviewer, CybeDefend, Semgrep and
-      CodeQL.
+      CodeQL, and with their published results where a rerun is not possible.
 - [ ] **P10-02** All ablations: business rules, single vs multi-agent, static
       vs live, memory on vs off.
 - [ ] **P10-03** Stability analysis across repeated runs.
@@ -331,12 +344,14 @@ Quick wins from the first full review come first in this phase.
 
 ## Next pull requests
 
-1. **P0-01** Merge the current branch.
-2. **P1-01**, **P1-03** First benchmark case and the eval script, with
+1. **P0-01** Merge the current branch, and **P0-05** close the delivered
+   issues.
+2. **P1-07** Headless `scan` command.
+3. **P1-01**, **P1-03** First benchmark case and the eval script, with
    baseline numbers.
-3. **P3-01** Keep related files in one batch.
-4. **P2-06** Checking pass for major and critical findings.
-5. **P2-01** to **P2-05** Finding-quality quick wins, each measured on P1-01.
-6. **P3-02** Coverage ledger and coverage section in the report.
-7. **P4-02**, **P4-03** Business rules from the target branch in CI; secret
+4. **P3-01** Keep related files in one batch.
+5. **P2-06** Checking pass for major and critical findings.
+6. **P2-01** to **P2-05** Finding-quality quick wins, each measured on P1-01.
+7. **P3-02** Coverage ledger and coverage section in the report.
+8. **P4-02**, **P4-03** Business rules from the target branch in CI; secret
    masking.
